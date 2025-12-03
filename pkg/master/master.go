@@ -9,7 +9,6 @@ import (
 
 	"avaneesh/dnp3-go/pkg/app"
 	"avaneesh/dnp3-go/pkg/channel"
-	"avaneesh/dnp3-go/pkg/dnp3"
 	"avaneesh/dnp3-go/pkg/internal/logger"
 	"avaneesh/dnp3-go/pkg/internal/queue"
 	"avaneesh/dnp3-go/pkg/types"
@@ -20,10 +19,13 @@ var (
 	ErrTimeout        = errors.New("operation timeout")
 )
 
+// MasterConfig and callback interfaces moved here to avoid circular import
+// These will be type-aliased or wrapped in dnp3 package
+
 // master implements the Master interface
 type master struct {
-	config    dnp3.MasterConfig
-	callbacks dnp3.MasterCallbacks
+	config    MasterConfig
+	callbacks MasterCallbacks
 	logger    logger.Logger
 
 	// Session
@@ -52,7 +54,7 @@ type master struct {
 }
 
 // New creates a new master
-func New(config dnp3.MasterConfig, callbacks dnp3.MasterCallbacks, ch *channel.Channel, log logger.Logger) (*master, error) {
+func New(config MasterConfig, callbacks MasterCallbacks, ch *channel.Channel, log logger.Logger) (*master, error) {
 	if log == nil {
 		log = logger.NewNoOpLogger()
 	}
@@ -180,16 +182,16 @@ func (m *master) processTasks() {
 
 	err := t.Execute(m)
 
-	result := dnp3.TaskResultSuccess
+	result := TaskResultSuccess
 	if err != nil {
 		m.logger.Error("Master %s: Task failed: %v", m.config.ID, err)
-		result = dnp3.TaskResultFailure
+		result = TaskResultFailure
 	}
 
 	m.callbacks.OnTaskComplete(t.Type(), 0, result)
 
 	// Reschedule periodic scans
-	m.reschedulePeriodic Scans()
+	m.reschedulePeriodicScans()
 }
 
 // reschedulePer iodicScans reschedules periodic scans

@@ -2,12 +2,12 @@ package master
 
 import (
 	"avaneesh/dnp3-go/pkg/app"
-	"avaneesh/dnp3-go/pkg/dnp3"
+	"avaneesh/dnp3-go/pkg/types"
 )
 
 // processMeasurements processes measurement data from response
 func (m *master) processMeasurements(apdu *app.APDU) {
-	info := dnp3.ResponseInfo{
+	info := ResponseInfo{
 		Unsolicited: apdu.FunctionCode == app.FuncUnsolicitedResponse,
 		FIR:         apdu.FIR,
 		FIN:         apdu.FIN,
@@ -25,7 +25,7 @@ func (m *master) processMeasurements(apdu *app.APDU) {
 			break
 		}
 
-		headerInfo := dnp3.HeaderInfo{
+		headerInfo := HeaderInfo{
 			Group:     header.Group,
 			Variation: header.Variation,
 			Qualifier: uint8(header.Qualifier),
@@ -54,7 +54,7 @@ func (m *master) processMeasurements(apdu *app.APDU) {
 }
 
 // processBinaryObjects processes binary input objects
-func (m *master) processBinaryObjects(parser *app.Parser, header *app.ObjectHeader, info dnp3.HeaderInfo) {
+func (m *master) processBinaryObjects(parser *app.Parser, header *app.ObjectHeader, info HeaderInfo) {
 	// TODO: Parse based on variation
 	// For now, just skip
 	count := app.GetCount(header.Range)
@@ -69,7 +69,7 @@ func (m *master) processBinaryObjects(parser *app.Parser, header *app.ObjectHead
 }
 
 // processAnalogObjects processes analog input objects
-func (m *master) processAnalogObjects(parser *app.Parser, header *app.ObjectHeader, info dnp3.HeaderInfo) {
+func (m *master) processAnalogObjects(parser *app.Parser, header *app.ObjectHeader, info HeaderInfo) {
 	// TODO: Parse based on variation
 	// For now, just skip
 	count := app.GetCount(header.Range)
@@ -84,7 +84,7 @@ func (m *master) processAnalogObjects(parser *app.Parser, header *app.ObjectHead
 }
 
 // processCounterObjects processes counter objects
-func (m *master) processCounterObjects(parser *app.Parser, header *app.ObjectHeader, info dnp3.HeaderInfo) {
+func (m *master) processCounterObjects(parser *app.Parser, header *app.ObjectHeader, info HeaderInfo) {
 	// TODO: Parse based on variation
 	// For now, just skip
 	count := app.GetCount(header.Range)

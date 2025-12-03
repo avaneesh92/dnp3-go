@@ -24,7 +24,7 @@ const (
 	FuncInitializeApplication FunctionCode = 0x10 // Initialize Application
 	FuncStartApplication      FunctionCode = 0x11 // Start Application
 	FuncStopApplication       FunctionCode = 0x12 // Stop Application
-	FuncSaveCon figuration      FunctionCode = 0x13 // Save Configuration
+	FuncSaveConfiguration     FunctionCode = 0x13 // Save Configuration
 	FuncEnableUnsolicited     FunctionCode = 0x14 // Enable Unsolicited
 	FuncDisableUnsolicited    FunctionCode = 0x15 // Disable Unsolicited
 	FuncAssignClass           FunctionCode = 0x16 // Assign Class

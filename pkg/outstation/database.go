@@ -4,7 +4,6 @@ import (
 	"math"
 	"sync"
 
-	"avaneesh/dnp3-go/pkg/dnp3"
 	"avaneesh/dnp3-go/pkg/types"
 )
 
@@ -87,7 +86,7 @@ type AnalogOutputStatusPoint struct {
 }
 
 // NewDatabase creates a new database from configuration
-func NewDatabase(config dnp3.DatabaseConfig, eventBuffer *EventBuffer) *Database {
+func NewDatabase(config DatabaseConfig, eventBuffer *EventBuffer) *Database {
 	db := &Database{
 		binary:        make([]BinaryPoint, len(config.Binary)),
 		doubleBit:     make([]DoubleBitBinaryPoint, len(config.DoubleBit)),
@@ -149,7 +148,7 @@ func NewDatabase(config dnp3.DatabaseConfig, eventBuffer *EventBuffer) *Database
 }
 
 // UpdateBinary updates a binary point
-func (db *Database) UpdateBinary(index uint16, value types.Binary, mode dnp3.EventMode) {
+func (db *Database) UpdateBinary(index uint16, value types.Binary, mode EventMode) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -166,11 +165,11 @@ func (db *Database) UpdateBinary(index uint16, value types.Binary, mode dnp3.Eve
 	// Check if event should be generated
 	shouldGenerate := false
 	switch mode {
-	case dnp3.EventModeForce:
+	case EventModeForce:
 		shouldGenerate = true
-	case dnp3.EventModeDetect:
+	case EventModeDetect:
 		shouldGenerate = (oldValue != value.Value)
-	case dnp3.EventModeSuppress:
+	case EventModeSuppress:
 		shouldGenerate = false
 	}
 
@@ -180,7 +179,7 @@ func (db *Database) UpdateBinary(index uint16, value types.Binary, mode dnp3.Eve
 }
 
 // UpdateAnalog updates an analog point
-func (db *Database) UpdateAnalog(index uint16, value types.Analog, mode dnp3.EventMode) {
+func (db *Database) UpdateAnalog(index uint16, value types.Analog, mode EventMode) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -197,12 +196,12 @@ func (db *Database) UpdateAnalog(index uint16, value types.Analog, mode dnp3.Eve
 	// Check if event should be generated
 	shouldGenerate := false
 	switch mode {
-	case dnp3.EventModeForce:
+	case EventModeForce:
 		shouldGenerate = true
-	case dnp3.EventModeDetect:
+	case EventModeDetect:
 		// Check deadband
 		shouldGenerate = math.Abs(oldValue-value.Value) > point.deadband
-	case dnp3.EventModeSuppress:
+	case EventModeSuppress:
 		shouldGenerate = false
 	}
 
@@ -212,7 +211,7 @@ func (db *Database) UpdateAnalog(index uint16, value types.Analog, mode dnp3.Eve
 }
 
 // UpdateCounter updates a counter point
-func (db *Database) UpdateCounter(index uint16, value types.Counter, mode dnp3.EventMode) {
+func (db *Database) UpdateCounter(index uint16, value types.Counter, mode EventMode) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -229,9 +228,9 @@ func (db *Database) UpdateCounter(index uint16, value types.Counter, mode dnp3.E
 	// Check if event should be generated
 	shouldGenerate := false
 	switch mode {
-	case dnp3.EventModeForce:
+	case EventModeForce:
 		shouldGenerate = true
-	case dnp3.EventModeDetect:
+	case EventModeDetect:
 		// Check deadband
 		var diff uint32
 		if value.Value > oldValue {
@@ -240,7 +239,7 @@ func (db *Database) UpdateCounter(index uint16, value types.Counter, mode dnp3.E
 			diff = oldValue - value.Value
 		}
 		shouldGenerate = diff > point.deadband
-	case dnp3.EventModeSuppress:
+	case EventModeSuppress:
 		shouldGenerate = false
 	}
 

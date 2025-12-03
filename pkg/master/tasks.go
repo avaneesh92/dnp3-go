@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"avaneesh/dnp3-go/pkg/app"
-	"avaneesh/dnp3-go/pkg/dnp3"
 	"avaneesh/dnp3-go/pkg/types"
 )
 
@@ -12,7 +11,7 @@ import (
 type Task interface {
 	Execute(m *master) error
 	Priority() int
-	Type() dnp3.TaskType
+	Type() TaskType
 }
 
 // Priority levels
@@ -37,8 +36,8 @@ func (t *IntegrityScanTask) Priority() int {
 	return t.priority
 }
 
-func (t *IntegrityScanTask) Type() dnp3.TaskType {
-	return dnp3.TaskTypeIntegrityScan
+func (t *IntegrityScanTask) Type() TaskType {
+	return TaskTypeIntegrityScan
 }
 
 // ClassScanTask performs a class scan
@@ -57,8 +56,8 @@ func (t *ClassScanTask) Priority() int {
 	return t.priority
 }
 
-func (t *ClassScanTask) Type() dnp3.TaskType {
-	return dnp3.TaskTypeClassScan
+func (t *ClassScanTask) Type() TaskType {
+	return TaskTypeClassScan
 }
 
 // RangeScanTask performs a range scan
@@ -81,8 +80,8 @@ func (t *RangeScanTask) Priority() int {
 	return t.priority
 }
 
-func (t *RangeScanTask) Type() dnp3.TaskType {
-	return dnp3.TaskTypeRangeScan
+func (t *RangeScanTask) Type() TaskType {
+	return TaskTypeRangeScan
 }
 
 // CommandTask executes a command
@@ -123,8 +122,8 @@ func (t *CommandTask) Priority() int {
 	return t.priority
 }
 
-func (t *CommandTask) Type() dnp3.TaskType {
-	return dnp3.TaskTypeCommand
+func (t *CommandTask) Type() TaskType {
+	return TaskTypeCommand
 }
 
 // PeriodicScan represents a periodic scan task

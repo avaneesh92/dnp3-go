@@ -9,7 +9,6 @@ import (
 
 	"avaneesh/dnp3-go/pkg/app"
 	"avaneesh/dnp3-go/pkg/channel"
-	"avaneesh/dnp3-go/pkg/dnp3"
 	"avaneesh/dnp3-go/pkg/internal/logger"
 	"avaneesh/dnp3-go/pkg/link"
 	"avaneesh/dnp3-go/pkg/transport"
@@ -22,8 +21,8 @@ var (
 
 // outstation implements the Outstation interface
 type outstation struct {
-	config    dnp3.OutstationConfig
-	callbacks dnp3.OutstationCallbacks
+	config    OutstationConfig
+	callbacks OutstationCallbacks
 	logger    logger.Logger
 
 	// Data storage
@@ -61,7 +60,7 @@ type updateRequest struct {
 }
 
 // New creates a new outstation
-func New(config dnp3.OutstationConfig, callbacks dnp3.OutstationCallbacks, ch *channel.Channel, log logger.Logger) (*outstation, error) {
+func New(config OutstationConfig, callbacks OutstationCallbacks, ch *channel.Channel, log logger.Logger) (*outstation, error) {
 	if log == nil {
 		log = logger.NewNoOpLogger()
 	}
@@ -164,7 +163,7 @@ func (o *outstation) Shutdown() error {
 }
 
 // Apply applies measurement updates atomically
-func (o *outstation) Apply(updates *dnp3.Updates) error {
+func (o *outstation) Apply(updates *Updates) error {
 	if !o.isEnabled() {
 		return ErrOutstationDisabled
 	}
@@ -188,7 +187,7 @@ func (o *outstation) Apply(updates *dnp3.Updates) error {
 }
 
 // SetConfig updates the outstation configuration
-func (o *outstation) SetConfig(config dnp3.OutstationConfig) error {
+func (o *outstation) SetConfig(config OutstationConfig) error {
 	o.stateMu.Lock()
 	defer o.stateMu.Unlock()
 
@@ -215,15 +214,15 @@ func (o *outstation) applyUpdates(builder *UpdateBuilder) {
 
 	for key, value := range updates {
 		switch key.pointType {
-		case dnp3.MeasurementTypeBinary:
+		case MeasurementTypeBinary:
 			if val, ok := value.measurement.(types.Binary); ok {
 				o.database.UpdateBinary(key.index, val, value.mode)
 			}
-		case dnp3.MeasurementTypeAnalog:
+		case MeasurementTypeAnalog:
 			if val, ok := value.measurement.(types.Analog); ok {
 				o.database.UpdateAnalog(key.index, val, value.mode)
 			}
-		case dnp3.MeasurementTypeCounter:
+		case MeasurementTypeCounter:
 			if val, ok := value.measurement.(types.Counter); ok {
 				o.database.UpdateCounter(key.index, val, value.mode)
 			}

@@ -3,17 +3,17 @@ package master
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"time"
 
 	"avaneesh/dnp3-go/pkg/app"
-	"avaneesh/dnp3-go/pkg/dnp3"
 	"avaneesh/dnp3-go/pkg/types"
 )
 
 // Scan operations
 
 // AddIntegrityScan adds a periodic integrity scan
-func (m *master) AddIntegrityScan(period time.Duration) (dnp3.ScanHandle, error) {
+func (m *master) AddIntegrityScan(period time.Duration) (ScanHandle, error) {
 	m.scansMu.Lock()
 	defer m.scansMu.Unlock()
 
@@ -42,7 +42,7 @@ func (m *master) AddIntegrityScan(period time.Duration) (dnp3.ScanHandle, error)
 }
 
 // AddClassScan adds a periodic class scan
-func (m *master) AddClassScan(classes app.ClassField, period time.Duration) (dnp3.ScanHandle, error) {
+func (m *master) AddClassScan(classes app.ClassField, period time.Duration) (ScanHandle, error) {
 	m.scansMu.Lock()
 	defer m.scansMu.Unlock()
 
@@ -72,7 +72,7 @@ func (m *master) AddClassScan(classes app.ClassField, period time.Duration) (dnp
 }
 
 // AddRangeScan adds a periodic range scan
-func (m *master) AddRangeScan(objGroup, variation uint8, start, stop uint16, period time.Duration) (dnp3.ScanHandle, error) {
+func (m *master) AddRangeScan(objGroup, variation uint8, start, stop uint16, period time.Duration) (ScanHandle, error) {
 	m.scansMu.Lock()
 	defer m.scansMu.Unlock()
 
@@ -147,7 +147,7 @@ func (m *master) demandScan(id int) error {
 
 	scan, exists := m.scans[id]
 	if !exists {
-		return dnp3.ErrNotImplemented
+		return errors.New("not implemented")
 	}
 
 	scan.demanded = true
@@ -299,6 +299,7 @@ func (m *master) performSelectAndOperate(commands []types.Command) ([]types.Comm
 
 	// Check SELECT response
 	// TODO: Parse response and check status
+	_ = selectResp // Use response
 
 	// OPERATE phase
 	operateAPDU := m.buildCommandAPDU(app.FuncOperate, commands)

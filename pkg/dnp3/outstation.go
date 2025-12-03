@@ -84,18 +84,10 @@ const (
 )
 
 // Updates represents a batch of measurement updates
+// This is a simple wrapper - the actual data is managed internally
 type Updates struct {
-	data map[updateKey]updateValue
-}
-
-type updateKey struct {
-	pointType MeasurementType
-	index     uint16
-}
-
-type updateValue struct {
-	measurement interface{}
-	mode        EventMode
+	// Internal data managed by the builder
+	Data interface{}
 }
 
 // MeasurementType identifies the type of measurement
