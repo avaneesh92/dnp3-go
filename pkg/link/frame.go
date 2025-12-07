@@ -120,7 +120,8 @@ func (f *Frame) Serialize() ([]byte, error) {
 // Parse parses wire format data into a Frame
 func Parse(data []byte) (*Frame, int, error) {
 	if len(data) < MinFrameSize {
-		return nil, 0, ErrFrameTooShort
+		// Debug: log the actual length received
+		return nil, len(data), ErrFrameTooShort
 	}
 
 	// Check start bytes

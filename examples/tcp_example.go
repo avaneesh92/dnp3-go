@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"time"
 
 	"avaneesh/dnp3-go/pkg/channel"
@@ -11,59 +9,27 @@ import (
 	"avaneesh/dnp3-go/pkg/types"
 )
 
-// SimpleLogger implements a basic logger for the example
-type SimpleLogger struct {
-	logger *log.Logger
-}
-
-func NewSimpleLogger() *SimpleLogger {
-	return &SimpleLogger{
-		logger: log.New(os.Stdout, "", log.LstdFlags),
-	}
-}
-
-func (l *SimpleLogger) Debug(format string, args ...interface{}) {
-	l.logger.Printf("[DEBUG] "+format, args...)
-}
-
-func (l *SimpleLogger) Info(format string, args ...interface{}) {
-	l.logger.Printf("[INFO] "+format, args...)
-}
-
-func (l *SimpleLogger) Warn(format string, args ...interface{}) {
-	l.logger.Printf("[WARN] "+format, args...)
-}
-
-func (l *SimpleLogger) Error(format string, args ...interface{}) {
-	l.logger.Printf("[ERROR] "+format, args...)
-}
-
-func (l *SimpleLogger) SetLevel(level int) {
-	// Simple logger doesn't support level filtering
-}
 
 // Example demonstrating TCP channel usage with DNP3
 
 func main() {
-	// Create logger
-	logger := NewSimpleLogger()
 
 	// Example 1: TCP Client (Master)
 	fmt.Println("=== TCP Client Example (Master) ===")
-	if err := runTCPMaster(logger); err != nil {
-		logger.Error("Master error: %v", err)
+	if err := runTCPMaster(); err != nil {
+		fmt.Println("Master error: %v", err)
 	}
 
 	fmt.Println()
 
 	// Example 2: TCP Server (Outstation)
 	fmt.Println("=== TCP Server Example (Outstation) ===")
-	if err := runTCPOutstation(logger); err != nil {
-		logger.Error("Outstation error: %v", err)
+	if err := runTCPOutstation(); err != nil {
+		fmt.Println("Outstation error: %v", err)
 	}
 }
 
-func runTCPMaster(logger *SimpleLogger) error {
+func runTCPMaster() error {
 	// Create TCP channel (client mode - connects to remote outstation)
 	tcpConfig := channel.TCPChannelConfig{
 		Address:        "127.0.0.1:20000", // Connect to outstation
@@ -81,15 +47,14 @@ func runTCPMaster(logger *SimpleLogger) error {
 
 	fmt.Printf("TCP Client connected to %s\n", tcpConfig.Address)
 
-	// Create DNP3 channel
-	dnp3Channel := channel.New("tcp-master", tcpChannel, logger)
-	if err := dnp3Channel.Open(); err != nil {
-		return fmt.Errorf("failed to open channel: %w", err)
-	}
-	defer dnp3Channel.Close()
 
 	// Create DNP3 manager
-	manager := dnp3.NewManagerWithLogger(logger)
+	// Create manager
+	manager := dnp3.NewManager()
+	defer manager.Shutdown()
+
+	// Add channel
+    manager.AddChannel("channel1", tcpChannel)
 
 	// Configure master
 	masterConfig := dnp3.DefaultMasterConfig()
@@ -99,7 +64,7 @@ func runTCPMaster(logger *SimpleLogger) error {
 	masterConfig.ResponseTimeout = 5 * time.Second
 
 	// Create master callbacks
-	callbacks := &MasterCallbacks{logger: logger}
+	callbacks := &MasterCallbacks{ }
 
 	// Create master
 	master, err := manager.CreateMaster(masterConfig, callbacks, dnp3Channel)
@@ -116,13 +81,13 @@ func runTCPMaster(logger *SimpleLogger) error {
 
 	// Perform integrity scan
 	if err := master.ScanIntegrity(); err != nil {
-		logger.Error("Integrity scan failed: %v", err)
+		fmt.Println("Integrity scan failed: %v", err)
 	}
 
 	// Add periodic integrity scan
 	handle, err := master.AddIntegrityScan(60 * time.Second)
 	if err != nil {
-		logger.Error("Failed to add periodic scan: %v", err)
+		fmt.Println("Failed to add periodic scan: %v", err)
 	} else {
 		defer handle.Remove()
 		fmt.Println("Added periodic integrity scan (60s)")
@@ -148,7 +113,7 @@ func runTCPMaster(logger *SimpleLogger) error {
 	return nil
 }
 
-func runTCPOutstation(logger *SimpleLogger) error {
+func runTCPOutstation( ) error {
 	// Create TCP channel (server mode - listens for incoming connections)
 	tcpConfig := channel.TCPChannelConfig{
 		Address:      "0.0.0.0:20000", // Listen on all interfaces
@@ -165,15 +130,14 @@ func runTCPOutstation(logger *SimpleLogger) error {
 
 	fmt.Printf("TCP Server listening on %s\n", tcpConfig.Address)
 
-	// Create DNP3 channel
-	dnp3Channel := channel.New("tcp-outstation", tcpChannel, logger)
-	if err := dnp3Channel.Open(); err != nil {
-		return fmt.Errorf("failed to open channel: %w", err)
-	}
-	defer dnp3Channel.Close()
-
 	// Create DNP3 manager
-	manager := dnp3.NewManagerWithLogger(logger)
+	manager := dnp3.NewManagerWith()
+	defer manager.Shutdown()
+	// Add channel
+	channel, err := manager.AddChannel("channel1", physicalChannel)
+	if err != nil {
+		panic(err)
+	}
 
 	// Configure outstation
 	outstationConfig := dnp3.DefaultOutstationConfig()
@@ -194,7 +158,7 @@ func runTCPOutstation(logger *SimpleLogger) error {
 	}
 
 	// Create outstation callbacks
-	callbacks := &OutstationCallbacks{logger: logger}
+	callbacks := &OutstationCallbacks{ }
 
 	// Create outstation
 	outstation, err := manager.CreateOutstation(outstationConfig, callbacks, dnp3Channel)
@@ -218,7 +182,7 @@ func runTCPOutstation(logger *SimpleLogger) error {
 		Build()
 
 	if err := outstation.Apply(updates); err != nil {
-		logger.Error("Failed to apply updates: %v", err)
+		fmt.Println("Failed to apply updates: %v", err)
 	} else {
 		fmt.Println("Applied initial values")
 	}
@@ -245,61 +209,61 @@ func runTCPOutstation(logger *SimpleLogger) error {
 
 // MasterCallbacks implements dnp3.MasterCallbacks
 type MasterCallbacks struct {
-	logger *SimpleLogger
+	
 }
 
 func (cb *MasterCallbacks) OnBeginFragment(info dnp3.ResponseInfo) {
-	cb.logger.Debug("Begin fragment: unsolicited=%v", info.Unsolicited)
+	fmt.Println("Begin fragment: unsolicited=%v", info.Unsolicited)
 }
 
 func (cb *MasterCallbacks) OnEndFragment(info dnp3.ResponseInfo) {
-	cb.logger.Debug("End fragment: unsolicited=%v", info.Unsolicited)
+	fmt.Println("End fragment: unsolicited=%v", info.Unsolicited)
 }
 
 func (cb *MasterCallbacks) ProcessBinary(info dnp3.HeaderInfo, values []types.IndexedBinary) {
-	cb.logger.Info("Received %d binary values", len(values))
+	fmt.Println("Received %d binary values", len(values))
 	for _, v := range values {
-		cb.logger.Info("  Binary[%d]: value=%v, flags=0x%02X", v.Index, v.Value.Value, v.Value.Flags)
+		fmt.Println("  Binary[%d]: value=%v, flags=0x%02X", v.Index, v.Value.Value, v.Value.Flags)
 	}
 }
 
 func (cb *MasterCallbacks) ProcessDoubleBitBinary(info dnp3.HeaderInfo, values []types.IndexedDoubleBitBinary) {
-	cb.logger.Info("Received %d double-bit binary values", len(values))
+	fmt.Println("Received %d double-bit binary values", len(values))
 }
 
 func (cb *MasterCallbacks) ProcessAnalog(info dnp3.HeaderInfo, values []types.IndexedAnalog) {
-	cb.logger.Info("Received %d analog values", len(values))
+	fmt.Println("Received %d analog values", len(values))
 	for _, v := range values {
-		cb.logger.Info("  Analog[%d]: value=%.2f, flags=0x%02X", v.Index, v.Value.Value, v.Value.Flags)
+		fmt.Println("  Analog[%d]: value=%.2f, flags=0x%02X", v.Index, v.Value.Value, v.Value.Flags)
 	}
 }
 
 func (cb *MasterCallbacks) ProcessCounter(info dnp3.HeaderInfo, values []types.IndexedCounter) {
-	cb.logger.Info("Received %d counter values", len(values))
+	fmt.Println("Received %d counter values", len(values))
 }
 
 func (cb *MasterCallbacks) ProcessFrozenCounter(info dnp3.HeaderInfo, values []types.IndexedFrozenCounter) {
-	cb.logger.Info("Received %d frozen counter values", len(values))
+	fmt.Println("Received %d frozen counter values", len(values))
 }
 
 func (cb *MasterCallbacks) ProcessBinaryOutputStatus(info dnp3.HeaderInfo, values []types.IndexedBinaryOutputStatus) {
-	cb.logger.Info("Received %d binary output status values", len(values))
+	fmt.Println("Received %d binary output status values", len(values))
 }
 
 func (cb *MasterCallbacks) ProcessAnalogOutputStatus(info dnp3.HeaderInfo, values []types.IndexedAnalogOutputStatus) {
-	cb.logger.Info("Received %d analog output status values", len(values))
+	fmt.Println("Received %d analog output status values", len(values))
 }
 
 func (cb *MasterCallbacks) OnReceiveIIN(iin types.IIN) {
-	cb.logger.Debug("Received IIN: IIN1=0x%02X, IIN2=0x%02X", iin.IIN1, iin.IIN2)
+	fmt.Println("Received IIN: IIN1=0x%02X, IIN2=0x%02X", iin.IIN1, iin.IIN2)
 }
 
 func (cb *MasterCallbacks) OnTaskStart(taskType dnp3.TaskType, id int) {
-	cb.logger.Debug("Task started: type=%d, id=%d", taskType, id)
+	fmt.Println("Task started: type=%d, id=%d", taskType, id)
 }
 
 func (cb *MasterCallbacks) OnTaskComplete(taskType dnp3.TaskType, id int, result dnp3.TaskResult) {
-	cb.logger.Debug("Task complete: type=%d, id=%d, result=%d", taskType, id, result)
+	fmt.Println("Task complete: type=%d, id=%d, result=%d", taskType, id, result)
 }
 
 func (cb *MasterCallbacks) GetTime() time.Time {
@@ -308,34 +272,34 @@ func (cb *MasterCallbacks) GetTime() time.Time {
 
 // OutstationCallbacks implements dnp3.OutstationCallbacks
 type OutstationCallbacks struct {
-	logger *SimpleLogger
+	
 }
 
 func (cb *OutstationCallbacks) Begin() {
-	cb.logger.Debug("Transaction begin")
+	fmt.Println("Transaction begin")
 }
 
 func (cb *OutstationCallbacks) End() {
-	cb.logger.Debug("Transaction end")
+	fmt.Println("Transaction end")
 }
 
 func (cb *OutstationCallbacks) SelectCROB(crob types.CROB, index uint16) types.CommandStatus {
-	cb.logger.Info("SELECT CROB[%d]: opType=%d", index, crob.OpType)
+	fmt.Println("SELECT CROB[%d]: opType=%d", index, crob.OpType)
 	return types.CommandStatusSuccess
 }
 
 func (cb *OutstationCallbacks) OperateCROB(crob types.CROB, index uint16, opType dnp3.OperateType, handler dnp3.UpdateHandler) types.CommandStatus {
-	cb.logger.Info("OPERATE CROB[%d]: opType=%d, opMode=%d", index, crob.OpType, opType)
+	fmt.Println("OPERATE CROB[%d]: opType=%d, opMode=%d", index, crob.OpType, opType)
 	return types.CommandStatusSuccess
 }
 
 func (cb *OutstationCallbacks) SelectAnalogOutputInt32(ao types.AnalogOutputInt32, index uint16) types.CommandStatus {
-	cb.logger.Info("SELECT AnalogOutput[%d]: value=%d", index, ao.Value)
+	fmt.Println("SELECT AnalogOutput[%d]: value=%d", index, ao.Value)
 	return types.CommandStatusSuccess
 }
 
 func (cb *OutstationCallbacks) OperateAnalogOutputInt32(ao types.AnalogOutputInt32, index uint16, opType dnp3.OperateType, handler dnp3.UpdateHandler) types.CommandStatus {
-	cb.logger.Info("OPERATE AnalogOutput[%d]: value=%d, opType=%d", index, ao.Value, opType)
+	fmt.Println("OPERATE AnalogOutput[%d]: value=%d, opType=%d", index, ao.Value, opType)
 	return types.CommandStatusSuccess
 }
 
@@ -364,11 +328,11 @@ func (cb *OutstationCallbacks) OperateAnalogOutputDouble64(ao types.AnalogOutput
 }
 
 func (cb *OutstationCallbacks) OnConfirmReceived(unsolicited bool, numClass1, numClass2, numClass3 uint) {
-	cb.logger.Debug("Confirm received: unsolicited=%v", unsolicited)
+	fmt.Println("Confirm received: unsolicited=%v", unsolicited)
 }
 
 func (cb *OutstationCallbacks) OnUnsolicitedResponse(success bool, seq uint8) {
-	cb.logger.Debug("Unsolicited response: success=%v, seq=%d", success, seq)
+	fmt.Println("Unsolicited response: success=%v, seq=%d", success, seq)
 }
 
 func (cb *OutstationCallbacks) GetApplicationIIN() types.IIN {

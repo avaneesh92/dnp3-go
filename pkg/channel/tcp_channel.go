@@ -210,19 +210,25 @@ func (tc *TCPChannel) Read(ctx context.Context) ([]byte, error) {
 		default:
 		}
 
-		tc.connLock.RLock()
-		conn := tc.conn
-		tc.connLock.RUnlock()
+		// Wait for connection if not available
+		var conn net.Conn
+		for {
+			tc.connLock.RLock()
+			conn = tc.conn
+			tc.connLock.RUnlock()
 
-		if conn == nil {
-			// No connection, wait a bit
+			if conn != nil {
+				break
+			}
+
+			// No connection, wait for one
 			select {
 			case <-time.After(100 * time.Millisecond):
 				continue
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-tc.ctx.Done():
-				return nil, fmt.Errorf("channel closed")
+				return nil, fmt.Errorf("channel closed X")
 			}
 		}
 
@@ -231,11 +237,17 @@ func (tc *TCPChannel) Read(ctx context.Context) ([]byte, error) {
 			conn.SetReadDeadline(time.Now().Add(tc.readTimeout))
 		}
 
-		// Read frame length (DNP3 frames start with 0x05 0x64)
-		header := make([]byte, 2)
-		_, err := io.ReadFull(conn, header)
+		// Read DNP3 frame header (10 bytes minimum: 0x05 0x64 + length + 5 header fields + 2 CRC)
+		header := make([]byte, 10)
+		n, err := io.ReadFull(conn, header)
 		if err != nil {
 			tc.handleReadError(err)
+			continue
+		}
+
+		// Debug: log what we read
+		if n < 10 {
+			tc.stats.readErrors.Add(1)
 			continue
 		}
 
@@ -245,33 +257,47 @@ func (tc *TCPChannel) Read(ctx context.Context) ([]byte, error) {
 			continue
 		}
 
-		// Read length byte
-		lengthByte := make([]byte, 1)
-		_, err = io.ReadFull(conn, lengthByte)
-		if err != nil {
-			tc.handleReadError(err)
-			continue
-		}
-
-		frameLength := int(lengthByte[0])
+		// Get length field (bytes 2) - this is the length of control + addresses + data
+		frameLength := int(header[2])
 		if frameLength < 5 {
 			tc.stats.readErrors.Add(1)
 			continue
 		}
 
-		// Read rest of frame
-		remaining := make([]byte, frameLength+2) // +2 for the header we already read
-		copy(remaining[0:2], header)
-		remaining[2] = lengthByte[0]
+		// Calculate user data length
+		dataLen := frameLength - 5 // Subtract control (1) + dest (2) + source (2)
 
-		_, err = io.ReadFull(conn, remaining[3:])
-		if err != nil {
-			tc.handleReadError(err)
+		// Calculate total additional bytes to read beyond the 10-byte header
+		// DNP3 data is in 16-byte blocks with 2-byte CRC after each block
+		var additionalBytes int
+		if dataLen > 0 {
+			numBlocks := (dataLen + 15) / 16
+			additionalBytes = dataLen + (numBlocks * 2)
+		}
+
+		// Allocate buffer for complete frame
+		frame := make([]byte, 10+additionalBytes)
+		copy(frame[0:10], header)
+
+		// Read remaining data if any
+		if additionalBytes > 0 {
+			_, err = io.ReadFull(conn, frame[10:])
+			if err != nil {
+				tc.handleReadError(err)
+				continue
+			}
+		}
+
+		tc.stats.bytesReceived.Add(uint64(len(frame)))
+
+		// Debug logging
+		if len(frame) < 10 {
+			// This should never happen, but log it if it does
+			tc.stats.readErrors.Add(1)
 			continue
 		}
 
-		tc.stats.bytesReceived.Add(uint64(len(remaining)))
-		return remaining, nil
+		return frame, nil
 	}
 }
 

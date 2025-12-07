@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -10,311 +9,226 @@ import (
 	"avaneesh/dnp3-go/pkg/channel"
 )
 
-// Example showing how to use the DNP3 library
-
-// Step 1: Implement PhysicalChannel for your transport
-type SimpleChannel struct {
-	// In real implementation, you'd have net.Conn or serial port here
+// Master callbacks implementation
+type MyMasterCallbacks struct {
+	lastPrintTime time.Time
 }
-
-func (c *SimpleChannel) Read(ctx context.Context) ([]byte, error) {
-	// Read from your transport (TCP, Serial, etc.)
-	return nil, nil
-}
-
-func (c *SimpleChannel) Write(ctx context.Context, data []byte) error {
-	// Write to your transport
-	return nil
-}
-
-func (c *SimpleChannel) Close() error {
-	return nil
-}
-
-func (c *SimpleChannel) Statistics() channel.TransportStats {
-	return channel.TransportStats{}
-}
-
-// Step 2: Implement Master callbacks
-type MyMasterCallbacks struct{}
 
 func (c *MyMasterCallbacks) OnBeginFragment(info dnp3.ResponseInfo) {
-	fmt.Println("Begin fragment")
+	// Don't print for every fragment - too verbose
 }
 
 func (c *MyMasterCallbacks) OnEndFragment(info dnp3.ResponseInfo) {
-	fmt.Println("End fragment")
+	// Don't print for every fragment - too verbose
 }
 
 func (c *MyMasterCallbacks) ProcessBinary(info dnp3.HeaderInfo, values []types.IndexedBinary) {
+	if len(values) == 0 {
+		return
+	}
+
+	fmt.Printf("\n=== Binary Inputs (Breaker States) ===\n")
 	for _, v := range values {
-		fmt.Printf("Binary[%d]: %v, Flags: 0x%02X\n", v.Index, v.Value.Value, v.Value.Flags)
+		status := "OFF"
+		if v.Value.Value {
+			status = "ON "
+		}
+		fmt.Printf("  Breaker[%d]: %s  (flags=0x%02X)\n", v.Index, status, v.Value.Flags)
 	}
 }
 
-func (c *MyMasterCallbacks) ProcessDoubleBitBinary(info dnp3.HeaderInfo, values []types.IndexedDoubleBitBinary) {}
+func (c *MyMasterCallbacks) ProcessDoubleBitBinary(info dnp3.HeaderInfo, values []types.IndexedDoubleBitBinary) {
+	// Not used in this example
+}
+
 func (c *MyMasterCallbacks) ProcessAnalog(info dnp3.HeaderInfo, values []types.IndexedAnalog) {
+	if len(values) == 0 {
+		return
+	}
+
+	fmt.Printf("\n=== Analog Inputs (Sensors) ===\n")
 	for _, v := range values {
-		fmt.Printf("Analog[%d]: %.2f\n", v.Index, v.Value.Value)
+		var description string
+		var unit string
+
+		switch v.Index {
+		case 0, 1:
+			description = "Temperature"
+			unit = "°C"
+		case 2, 3:
+			description = "Voltage    "
+			unit = "V"
+		case 4, 5:
+			description = "Current    "
+			unit = "A"
+		case 6, 7:
+			description = "Power      "
+			unit = "W"
+		default:
+			description = "Generic    "
+			unit = ""
+		}
+
+		fmt.Printf("  %s[%d]: %8.2f %s  (flags=0x%02X)\n",
+			description, v.Index, v.Value.Value, unit, v.Value.Flags)
 	}
 }
-func (c *MyMasterCallbacks) ProcessCounter(info dnp3.HeaderInfo, values []types.IndexedCounter) {}
-func (c *MyMasterCallbacks) ProcessFrozenCounter(info dnp3.HeaderInfo, values []types.IndexedFrozenCounter) {}
-func (c *MyMasterCallbacks) ProcessBinaryOutputStatus(info dnp3.HeaderInfo, values []types.IndexedBinaryOutputStatus) {}
-func (c *MyMasterCallbacks) ProcessAnalogOutputStatus(info dnp3.HeaderInfo, values []types.IndexedAnalogOutputStatus) {}
+
+func (c *MyMasterCallbacks) ProcessCounter(info dnp3.HeaderInfo, values []types.IndexedCounter) {
+	if len(values) == 0 {
+		return
+	}
+
+	fmt.Printf("\n=== Counters (Energy Meters) ===\n")
+	for _, v := range values {
+		fmt.Printf("  Energy Meter[%d]: %10d kWh  (flags=0x%02X)\n",
+			v.Index, v.Value.Value, v.Value.Flags)
+	}
+
+	// Print timestamp after all data
+	fmt.Printf("\n[%s] Data received from outstation\n", time.Now().Format("15:04:05"))
+	fmt.Println("=====================================")
+}
+
+func (c *MyMasterCallbacks) ProcessFrozenCounter(info dnp3.HeaderInfo, values []types.IndexedFrozenCounter) {
+	fmt.Printf("Received %d frozen counter values\n", len(values))
+}
+
+func (c *MyMasterCallbacks) ProcessBinaryOutputStatus(info dnp3.HeaderInfo, values []types.IndexedBinaryOutputStatus) {
+	fmt.Printf("Received %d binary output status values\n", len(values))
+}
+
+func (c *MyMasterCallbacks) ProcessAnalogOutputStatus(info dnp3.HeaderInfo, values []types.IndexedAnalogOutputStatus) {
+	fmt.Printf("Received %d analog output status values\n", len(values))
+}
 
 func (c *MyMasterCallbacks) OnReceiveIIN(iin types.IIN) {
-	fmt.Printf("IIN: [%02X,%02X]\n", iin.IIN1, iin.IIN2)
+	// Only print if there are error flags set
+	if iin.IIN1 != 0 || iin.IIN2 != 0 {
+		fmt.Printf("\n[WARNING] IIN Flags: IIN1=0x%02X, IIN2=0x%02X\n", iin.IIN1, iin.IIN2)
+	}
 }
 
 func (c *MyMasterCallbacks) OnTaskStart(taskType dnp3.TaskType, id int) {
-	fmt.Printf("Task started: %d\n", taskType)
+	// Don't print - too verbose
 }
 
 func (c *MyMasterCallbacks) OnTaskComplete(taskType dnp3.TaskType, id int, result dnp3.TaskResult) {
-	fmt.Printf("Task complete: %d, result: %d\n", taskType, result)
+	// Only print failures
+	if result != 0 { // Assuming 0 is success
+		fmt.Printf("\n[ERROR] Task failed: type=%d, id=%d, result=%d\n", taskType, id, result)
+	}
 }
 
 func (c *MyMasterCallbacks) GetTime() time.Time {
 	return time.Now()
 }
 
-// Step 3: Implement Outstation callbacks
-type MyOutstationCallbacks struct{}
+func main() {
+	fmt.Println("DNP3-Go Example Master")
+	fmt.Println("Connecting to outstation at 127.0.0.1:20000")
 
-func (c *MyOutstationCallbacks) Begin() {
-	fmt.Println("Command Begin")
-}
-
-func (c *MyOutstationCallbacks) End() {
-	fmt.Println("Command End")
-}
-
-func (c *MyOutstationCallbacks) SelectCROB(crob types.CROB, index uint16) types.CommandStatus {
-	fmt.Printf("SELECT CROB[%d]: %v\n", index, crob.OpType)
-	return types.CommandStatusSuccess
-}
-
-func (c *MyOutstationCallbacks) OperateCROB(crob types.CROB, index uint16, opType dnp3.OperateType, handler dnp3.UpdateHandler) types.CommandStatus {
-	fmt.Printf("OPERATE CROB[%d]: %v\n", index, crob.OpType)
-
-	// Update corresponding binary output status
-	bos := types.BinaryOutputStatus{
-		Value: crob.OpType == types.ControlCodeLatchOn,
-		Flags: types.FlagOnline,
-		Time:  types.Now(),
+	// Create TCP channel (client mode - connects to outstation)
+	tcpConfig := channel.TCPChannelConfig{
+		Address:        "127.0.0.1:20000", // Connect to outstation
+		IsServer:       false,              // Client mode
+		ReconnectDelay: 5 * time.Second,
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   10 * time.Second,
 	}
-	handler.Update(bos, index, dnp3.EventModeForce)
 
-	return types.CommandStatusSuccess
-}
+	tcpChannel, err := channel.NewTCPChannel(tcpConfig)
+	if err != nil {
+		fmt.Printf("Failed to create TCP channel: %v\n", err)
+		return
+	}
 
-func (c *MyOutstationCallbacks) SelectAnalogOutputInt32(ao types.AnalogOutputInt32, index uint16) types.CommandStatus {
-	return types.CommandStatusSuccess
-}
+	fmt.Printf("TCP Client connected to %s\n", tcpConfig.Address)
 
-func (c *MyOutstationCallbacks) OperateAnalogOutputInt32(ao types.AnalogOutputInt32, index uint16, opType dnp3.OperateType, handler dnp3.UpdateHandler) types.CommandStatus {
-	return types.CommandStatusSuccess
-}
-
-func (c *MyOutstationCallbacks) SelectAnalogOutputInt16(ao types.AnalogOutputInt16, index uint16) types.CommandStatus {
-	return types.CommandStatusSuccess
-}
-
-func (c *MyOutstationCallbacks) OperateAnalogOutputInt16(ao types.AnalogOutputInt16, index uint16, opType dnp3.OperateType, handler dnp3.UpdateHandler) types.CommandStatus {
-	return types.CommandStatusSuccess
-}
-
-func (c *MyOutstationCallbacks) SelectAnalogOutputFloat32(ao types.AnalogOutputFloat32, index uint16) types.CommandStatus {
-	return types.CommandStatusSuccess
-}
-
-func (c *MyOutstationCallbacks) OperateAnalogOutputFloat32(ao types.AnalogOutputFloat32, index uint16, opType dnp3.OperateType, handler dnp3.UpdateHandler) types.CommandStatus {
-	return types.CommandStatusSuccess
-}
-
-func (c *MyOutstationCallbacks) SelectAnalogOutputDouble64(ao types.AnalogOutputDouble64, index uint16) types.CommandStatus {
-	return types.CommandStatusSuccess
-}
-
-func (c *MyOutstationCallbacks) OperateAnalogOutputDouble64(ao types.AnalogOutputDouble64, index uint16, opType dnp3.OperateType, handler dnp3.UpdateHandler) types.CommandStatus {
-	return types.CommandStatusSuccess
-}
-
-func (c *MyOutstationCallbacks) OnConfirmReceived(unsolicited bool, numClass1, numClass2, numClass3 uint) {
-	fmt.Printf("Confirm received\n")
-}
-
-func (c *MyOutstationCallbacks) OnUnsolicitedResponse(success bool, seq uint8) {
-	fmt.Printf("Unsolicited response sent: %v\n", success)
-}
-
-func (c *MyOutstationCallbacks) GetApplicationIIN() types.IIN {
-	return types.IIN{IIN1: 0, IIN2: 0}
-}
-
-// Example usage
-func exampleMaster() {
-	// Create manager
+	// Create DNP3 manager
 	manager := dnp3.NewManager()
-	defer manager.Shutdown()
-
-	// Create your custom transport
-	physicalChannel := &SimpleChannel{}
+	// Note: We don't defer Shutdown here because we want to keep running
 
 	// Add channel
-	channel, err := manager.AddChannel("channel1", physicalChannel)
+	dnp3Channel, err := manager.AddChannel("channel1", tcpChannel)
 	if err != nil {
-		panic(err)
+		fmt.Printf("Failed to add channel: %v\n", err)
+		return
 	}
 
 	// Configure master
-	config := dnp3.DefaultMasterConfig()
-	config.ID = "master1"
-	config.LocalAddress = 1
-	config.RemoteAddress = 10
+	masterConfig := dnp3.DefaultMasterConfig()
+	masterConfig.ID = "master1"
+	masterConfig.LocalAddress = 1  // Master address
+	masterConfig.RemoteAddress = 10 // Outstation address
+	masterConfig.ResponseTimeout = 5 * time.Second
+
+	// Create master callbacks
+	callbacks := &MyMasterCallbacks{}
 
 	// Create master
-	master, err := channel.AddMaster(config, &MyMasterCallbacks{})
+	master, err := dnp3Channel.AddMaster(masterConfig, callbacks)
 	if err != nil {
-		panic(err)
+		fmt.Printf("Failed to create master: %v\n", err)
+		return
 	}
 
 	// Enable master
-	master.Enable()
-
-	// Add periodic integrity scan (every 60 seconds)
-	master.AddIntegrityScan(60 * time.Second)
-
-	// Add periodic class 1 scan (every 10 seconds)
-	master.AddClassScan(dnp3.Class1, 10*time.Second)
-
-	// Perform one-time integrity scan
-	master.ScanIntegrity()
-
-	// Send a control command
-	commands := []types.Command{
-		{
-			Index: 5,
-			Type:  types.CommandTypeCROB,
-			Data: types.CROB{
-				OpType:   types.ControlCodeLatchOn,
-				Count:    1,
-				OnTimeMs: 1000,
-			},
-		},
+	if err := master.Enable(); err != nil {
+		fmt.Printf("Failed to enable master: %v\n", err)
+		return
 	}
 
-	statuses, err := master.DirectOperate(commands)
+	fmt.Println("Master enabled")
+	fmt.Println("=====================================")
+	fmt.Println("Monitoring outstation data...")
+	fmt.Println("Updates will appear every 6 seconds")
+	fmt.Println("=====================================")
+
+	// Wait a moment for connection to establish
+	time.Sleep(1 * time.Second)
+
+	// Perform initial integrity scan
+	if err := master.ScanIntegrity(); err != nil {
+		fmt.Printf("Initial integrity scan failed: %v\n", err)
+	}
+
+	// Add periodic integrity scan (every 30 seconds to get full data refresh)
+	handle, err := master.AddIntegrityScan(30 * time.Second)
 	if err != nil {
-		fmt.Printf("Command error: %v\n", err)
+		fmt.Printf("Failed to add periodic scan: %v\n", err)
 	} else {
-		fmt.Printf("Command statuses: %v\n", statuses)
+		defer handle.Remove()
 	}
-}
 
-func exampleOutstation() {
-	// Create manager
-	manager := dnp3.NewManager()
-	defer manager.Shutdown()
-
-	// Create your custom transport
-	physicalChannel := &SimpleChannel{}
-
-	// Add channel
-	channel, err := manager.AddChannel("channel1", physicalChannel)
+	// Add periodic class 1 scan (every 6 seconds to poll for changes)
+	class1Handle, err := master.AddClassScan(dnp3.Class1, 6*time.Second)
 	if err != nil {
-		panic(err)
+		fmt.Printf("Failed to add class 1 scan: %v\n", err)
+	} else {
+		defer class1Handle.Remove()
 	}
 
-	// Configure database
-	dbConfig := dnp3.DatabaseConfig{
-		Binary:  make([]dnp3.BinaryPointConfig, 10),
-		Analog:  make([]dnp3.AnalogPointConfig, 10),
-		Counter: make([]dnp3.CounterPointConfig, 10),
-	}
-
-	// Set point configurations
-	for i := range dbConfig.Binary {
-		dbConfig.Binary[i] = dnp3.BinaryPointConfig{
-			StaticVariation: 1,
-			EventVariation:  2,
-			Class:           1, // Class 1 events
-		}
-	}
-
-	for i := range dbConfig.Analog {
-		dbConfig.Analog[i] = dnp3.AnalogPointConfig{
-			StaticVariation: 1,
-			EventVariation:  1,
-			Class:           2, // Class 2 events
-			Deadband:        0.5,
-		}
-	}
-
-	// Configure outstation
-	config := dnp3.DefaultOutstationConfig()
-	config.ID = "outstation1"
-	config.LocalAddress = 10
-	config.RemoteAddress = 1
-	config.Database = dbConfig
-
-	// Create outstation
-	outstation, err := channel.AddOutstation(config, &MyOutstationCallbacks{})
-	if err != nil {
-		panic(err)
-	}
-
-	// Enable outstation
-	outstation.Enable()
-
-	// Simulate measurement updates
+	// Show statistics periodically (every 60 seconds)
 	go func() {
-		counter := uint32(0)
+		time.Sleep(60 * time.Second) // Wait before first stats
 		for {
-			time.Sleep(5 * time.Second)
-
-			// Build atomic update
-			builder := dnp3.NewUpdateBuilder()
-
-			// Update binary
-			builder.UpdateBinary(types.Binary{
-				Value: counter%2 == 0,
-				Flags: types.FlagOnline,
-				Time:  types.Now(),
-			}, 0, dnp3.EventModeDetect)
-
-			// Update analog
-			builder.UpdateAnalog(types.Analog{
-				Value: float64(counter) * 1.5,
-				Flags: types.FlagOnline,
-				Time:  types.Now(),
-			}, 0, dnp3.EventModeDetect)
-
-			// Update counter
-			builder.UpdateCounter(types.Counter{
-				Value: counter,
-				Flags: types.FlagOnline,
-				Time:  types.Now(),
-			}, 0, dnp3.EventModeDetect)
-
-			// Apply updates atomically
-			updates := builder.Build()
-			if err := outstation.Apply(updates); err != nil {
-				fmt.Printf("Update error: %v\n", err)
+			stats := tcpChannel.Statistics()
+			fmt.Printf("\n=== Connection Statistics ===\n")
+			fmt.Printf("  Bytes Sent: %d\n", stats.BytesSent)
+			fmt.Printf("  Bytes Received: %d\n", stats.BytesReceived)
+			fmt.Printf("  Connects: %d\n", stats.Connects)
+			fmt.Printf("  Disconnects: %d\n", stats.Disconnects)
+			if stats.ReadErrors > 0 || stats.WriteErrors > 0 {
+				fmt.Printf("  Read Errors: %d\n", stats.ReadErrors)
+				fmt.Printf("  Write Errors: %d\n", stats.WriteErrors)
 			}
-
-			counter++
+			fmt.Println("============================\n")
+			time.Sleep(60 * time.Second)
 		}
 	}()
-}
 
-func main() {
-	fmt.Println("DNP3-Go Example")
-	fmt.Println("This example shows the API usage.")
-	fmt.Println("In real use, you'd implement PhysicalChannel for your transport.")
-
-	// Uncomment to run examples:
-	exampleMaster()
-	// exampleOutstation()
+	// Keep the program running
+	fmt.Println("\nMaster running. Press Ctrl+C to exit.")
+	select {} // Block forever
 }

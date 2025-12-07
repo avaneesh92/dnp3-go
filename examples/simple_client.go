@@ -1,8 +1,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"avaneesh/dnp3-go/pkg/dnp3"
@@ -12,74 +12,7 @@ import (
 
 // Example showing how to use the DNP3 library
 
-// Step 1: Implement PhysicalChannel for your transport
-type SimpleChannel struct {
-	// In real implementation, you'd have net.Conn or serial port here
-}
-
-func (c *SimpleChannel) Read(ctx context.Context) ([]byte, error) {
-	// Read from your transport (TCP, Serial, etc.)
-	return nil, nil
-}
-
-func (c *SimpleChannel) Write(ctx context.Context, data []byte) error {
-	// Write to your transport
-	return nil
-}
-
-func (c *SimpleChannel) Close() error {
-	return nil
-}
-
-func (c *SimpleChannel) Statistics() channel.TransportStats {
-	return channel.TransportStats{}
-}
-
-// Step 2: Implement Master callbacks
-type MyMasterCallbacks struct{}
-
-func (c *MyMasterCallbacks) OnBeginFragment(info dnp3.ResponseInfo) {
-	fmt.Println("Begin fragment")
-}
-
-func (c *MyMasterCallbacks) OnEndFragment(info dnp3.ResponseInfo) {
-	fmt.Println("End fragment")
-}
-
-func (c *MyMasterCallbacks) ProcessBinary(info dnp3.HeaderInfo, values []types.IndexedBinary) {
-	for _, v := range values {
-		fmt.Printf("Binary[%d]: %v, Flags: 0x%02X\n", v.Index, v.Value.Value, v.Value.Flags)
-	}
-}
-
-func (c *MyMasterCallbacks) ProcessDoubleBitBinary(info dnp3.HeaderInfo, values []types.IndexedDoubleBitBinary) {}
-func (c *MyMasterCallbacks) ProcessAnalog(info dnp3.HeaderInfo, values []types.IndexedAnalog) {
-	for _, v := range values {
-		fmt.Printf("Analog[%d]: %.2f\n", v.Index, v.Value.Value)
-	}
-}
-func (c *MyMasterCallbacks) ProcessCounter(info dnp3.HeaderInfo, values []types.IndexedCounter) {}
-func (c *MyMasterCallbacks) ProcessFrozenCounter(info dnp3.HeaderInfo, values []types.IndexedFrozenCounter) {}
-func (c *MyMasterCallbacks) ProcessBinaryOutputStatus(info dnp3.HeaderInfo, values []types.IndexedBinaryOutputStatus) {}
-func (c *MyMasterCallbacks) ProcessAnalogOutputStatus(info dnp3.HeaderInfo, values []types.IndexedAnalogOutputStatus) {}
-
-func (c *MyMasterCallbacks) OnReceiveIIN(iin types.IIN) {
-	fmt.Printf("IIN: [%02X,%02X]\n", iin.IIN1, iin.IIN2)
-}
-
-func (c *MyMasterCallbacks) OnTaskStart(taskType dnp3.TaskType, id int) {
-	fmt.Printf("Task started: %d\n", taskType)
-}
-
-func (c *MyMasterCallbacks) OnTaskComplete(taskType dnp3.TaskType, id int, result dnp3.TaskResult) {
-	fmt.Printf("Task complete: %d, result: %d\n", taskType, result)
-}
-
-func (c *MyMasterCallbacks) GetTime() time.Time {
-	return time.Now()
-}
-
-// Step 3: Implement Outstation callbacks
+// Implement Outstation callbacks
 type MyOutstationCallbacks struct{}
 
 func (c *MyOutstationCallbacks) Begin() {
@@ -153,76 +86,31 @@ func (c *MyOutstationCallbacks) GetApplicationIIN() types.IIN {
 	return types.IIN{IIN1: 0, IIN2: 0}
 }
 
-// Example usage
-func exampleMaster() {
-	// Create manager
-	manager := dnp3.NewManager()
-	defer manager.Shutdown()
-
-	// Create your custom transport
-	physicalChannel := &SimpleChannel{}
-
-	// Add channel
-	channel, err := manager.AddChannel("channel1", physicalChannel)
-	if err != nil {
-		panic(err)
-	}
-
-	// Configure master
-	config := dnp3.DefaultMasterConfig()
-	config.ID = "master1"
-	config.LocalAddress = 1
-	config.RemoteAddress = 10
-
-	// Create master
-	master, err := channel.AddMaster(config, &MyMasterCallbacks{})
-	if err != nil {
-		panic(err)
-	}
-
-	// Enable master
-	master.Enable()
-
-	// Add periodic integrity scan (every 60 seconds)
-	master.AddIntegrityScan(60 * time.Second)
-
-	// Add periodic class 1 scan (every 10 seconds)
-	master.AddClassScan(dnp3.Class1, 10*time.Second)
-
-	// Perform one-time integrity scan
-	master.ScanIntegrity()
-
-	// Send a control command
-	commands := []types.Command{
-		{
-			Index: 5,
-			Type:  types.CommandTypeCROB,
-			Data: types.CROB{
-				OpType:   types.ControlCodeLatchOn,
-				Count:    1,
-				OnTimeMs: 1000,
-			},
-		},
-	}
-
-	statuses, err := master.DirectOperate(commands)
-	if err != nil {
-		fmt.Printf("Command error: %v\n", err)
-	} else {
-		fmt.Printf("Command statuses: %v\n", statuses)
-	}
-}
 
 func exampleOutstation() {
 	// Create manager
 	manager := dnp3.NewManager()
-	defer manager.Shutdown()
+	// Note: We don't defer Shutdown here because we want to keep running
 
 	// Create your custom transport
-	physicalChannel := &SimpleChannel{}
+	// Create TCP channel (server mode - listens for incoming connections)
+	tcpConfig := channel.TCPChannelConfig{
+		Address:      "127.0.0.1:20000", // Listen on all interfaces
+		IsServer:     true,             // Server mode
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	tcpChannel, err := channel.NewTCPChannel(tcpConfig)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("TCP Server listening on %s\n", tcpConfig.Address)
+
 
 	// Add channel
-	channel, err := manager.AddChannel("channel1", physicalChannel)
+	channel, err := manager.AddChannel("channel1", tcpChannel)
 	if err != nil {
 		panic(err)
 	}
@@ -268,40 +156,65 @@ func exampleOutstation() {
 	// Enable outstation
 	outstation.Enable()
 
-	// Simulate measurement updates
+	// Simulate measurement updates with random values
 	go func() {
 		counter := uint32(0)
+		baseTemp := 20.0
+		baseVoltage := 120.0
+
 		for {
 			time.Sleep(5 * time.Second)
 
 			// Build atomic update
 			builder := dnp3.NewUpdateBuilder()
 
-			// Update binary
-			builder.UpdateBinary(types.Binary{
-				Value: counter%2 == 0,
-				Flags: types.FlagOnline,
-				Time:  types.Now(),
-			}, 0, dnp3.EventModeDetect)
+			// Update binary inputs (simulate random breaker states)
+			for i := 0; i < 10; i++ {
+				builder.UpdateBinary(types.Binary{
+					Value: rand.Float64() > 0.3, // 70% chance of being true
+					Flags: types.FlagOnline,
+					Time:  types.Now(),
+				}, uint16(i), dnp3.EventModeDetect)
+			}
 
-			// Update analog
-			builder.UpdateAnalog(types.Analog{
-				Value: float64(counter) * 1.5,
-				Flags: types.FlagOnline,
-				Time:  types.Now(),
-			}, 0, dnp3.EventModeDetect)
+			// Update analog inputs (simulate random temperature, voltage, etc.)
+			for i := 0; i < 10; i++ {
+				var value float64
+				switch i {
+				case 0, 1: // Temperature sensors
+					value = baseTemp + (rand.Float64()-0.5)*10 // ±5°C variation
+				case 2, 3: // Voltage sensors
+					value = baseVoltage + (rand.Float64()-0.5)*20 // ±10V variation
+				case 4, 5: // Current sensors
+					value = 10.0 + rand.Float64()*50 // 10-60A
+				case 6, 7: // Power sensors
+					value = 1000.0 + rand.Float64()*5000 // 1-6kW
+				default: // Generic values
+					value = rand.Float64() * 100
+				}
 
-			// Update counter
-			builder.UpdateCounter(types.Counter{
-				Value: counter,
-				Flags: types.FlagOnline,
-				Time:  types.Now(),
-			}, 0, dnp3.EventModeDetect)
+				builder.UpdateAnalog(types.Analog{
+					Value: value,
+					Flags: types.FlagOnline,
+					Time:  types.Now(),
+				}, uint16(i), dnp3.EventModeDetect)
+			}
+
+			// Update counters (simulate energy meters)
+			for i := 0; i < 10; i++ {
+				builder.UpdateCounter(types.Counter{
+					Value: counter + uint32(i*100),
+					Flags: types.FlagOnline,
+					Time:  types.Now(),
+				}, uint16(i), dnp3.EventModeDetect)
+			}
 
 			// Apply updates atomically
 			updates := builder.Build()
 			if err := outstation.Apply(updates); err != nil {
 				fmt.Printf("Update error: %v\n", err)
+			} else {
+				fmt.Printf("[%s] Updated values - Counter: %d\n", time.Now().Format("15:04:05"), counter)
 			}
 
 			counter++
@@ -310,11 +223,11 @@ func exampleOutstation() {
 }
 
 func main() {
-	fmt.Println("DNP3-Go Example")
-	fmt.Println("This example shows the API usage.")
-	fmt.Println("In real use, you'd implement PhysicalChannel for your transport.")
+	fmt.Println("DNP3-Go Example outstation")
 
-	// Uncomment to run examples:
-	//exampleMaster()
 	exampleOutstation()
+
+	// Keep the program running
+	fmt.Println("Outstation running. Press Ctrl+C to exit.")
+	select {} // Block forever
 }

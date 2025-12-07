@@ -152,7 +152,10 @@ func (c *Channel) readLoop() {
 		// Parse link frame
 		frame, _, err := link.Parse(data)
 		if err != nil {
-			c.logger.Error("Channel %s parse error: %v", c.id, err)
+			c.logger.Error("Channel %s parse error: %v (received %d bytes, expected >= 10)", c.id, err, len(data))
+			if len(data) < 20 {
+				c.logger.Debug("Channel %s received data: %X", c.id, data)
+			}
 			c.stats.BadLinkFrame()
 			continue
 		}
