@@ -7,6 +7,7 @@ import (
 	"avaneesh/dnp3-go/pkg/dnp3"
 	"avaneesh/dnp3-go/pkg/types"
 	"avaneesh/dnp3-go/pkg/channel"
+	"avaneesh/dnp3-go/pkg/app"
 )
 
 // Master callbacks implementation
@@ -15,11 +16,17 @@ type MyMasterCallbacks struct {
 }
 
 func (c *MyMasterCallbacks) OnBeginFragment(info dnp3.ResponseInfo) {
-	// Don't print for every fragment - too verbose
+	// Print for unsolicited responses to show they're being received
+	if info.Unsolicited {
+		fmt.Printf("\n>>> Unsolicited Response Received <<<\n")
+	}
 }
 
 func (c *MyMasterCallbacks) OnEndFragment(info dnp3.ResponseInfo) {
-	// Don't print for every fragment - too verbose
+	// Print end marker for unsolicited responses
+	if info.Unsolicited {
+		fmt.Printf(">>> End Unsolicited Response <<<\n")
+	}
 }
 
 func (c *MyMasterCallbacks) ProcessBinary(info dnp3.HeaderInfo, values []types.IndexedBinary) {
@@ -163,6 +170,10 @@ func main() {
 	masterConfig.RemoteAddress = 10 // Outstation address
 	masterConfig.ResponseTimeout = 5 * time.Second
 
+	// Enable unsolicited responses for Class 1 (binary) and Class 2 (analog)
+	masterConfig.DisableUnsolOnStartup = false
+	masterConfig.UnsolClassMask = app.Class1 | app.Class2
+
 	// Create master callbacks
 	callbacks := &MyMasterCallbacks{}
 
@@ -182,7 +193,10 @@ func main() {
 	fmt.Println("Master enabled")
 	fmt.Println("=====================================")
 	fmt.Println("Monitoring outstation data...")
-	fmt.Println("Updates will appear every 6 seconds")
+	fmt.Println("Unsolicited responses enabled for:")
+	fmt.Println("  - Class 1 (Binary inputs)")
+	fmt.Println("  - Class 2 (Analog inputs)")
+	fmt.Println("Periodic scans also running...")
 	fmt.Println("=====================================")
 
 	// Wait a moment for connection to establish
@@ -202,7 +216,7 @@ func main() {
 	}
 
 	// Add periodic class 1 scan (every 6 seconds to poll for changes)
-	class1Handle, err := master.AddClassScan(dnp3.Class1, 6*time.Second)
+	class1Handle, err := master.AddClassScan(dnp3.Class1, 60*time.Second)
 	if err != nil {
 		fmt.Printf("Failed to add class 1 scan: %v\n", err)
 	} else {
