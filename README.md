@@ -2,6 +2,8 @@
 
 A pure Go implementation of the DNP3 (Distributed Network Protocol 3) protocol, translated from the OpenDNP3 C++ library with idiomatic Go patterns.
 
+**🎉 Initial Release: Working master and outstation implementations with TCP/UDP channels!**
+
 ## Features
 
 ✅ **Master (Client) Implementation** - Full scanning operations, command execution, and measurement callbacks
@@ -13,8 +15,7 @@ A pure Go implementation of the DNP3 (Distributed Network Protocol 3) protocol, 
 
 ## Project Status
 
-🚧 **Phase 3 Complete** - Channel infrastructure with pluggable transports
-⏳ **Phase 4-6 In Progress** - Master, Outstation, and examples coming soon
+🎉 **Working Release** - Master and Outstation implementations complete with TCP and UDP channels!
 
 ### Completed
 
@@ -24,12 +25,17 @@ A pure Go implementation of the DNP3 (Distributed Network Protocol 3) protocol, 
 - ✅ Application layer (APDU, object groups/variations, parsing)
 - ✅ Channel abstraction with pluggable `PhysicalChannel` interface
 - ✅ DNP3Manager and public API structure
+- ✅ **TCP Channel** - Full client/server implementation with auto-reconnect
+- ✅ **UDP Channel** - Datagram-based transport
+- ✅ **Master implementation** - Scanning, commands, unsolicited responses, SOE handler
+- ✅ **Outstation implementation** - Database, event generation, command processing
+- ✅ **Working Examples** - Simple master/outstation demo over TCP
 
 ### In Progress
 
-- ⏳ Master implementation (scanning, commands, SOE handler)
-- ⏳ Outstation implementation (database, events, command processing)
-- ⏳ Examples and integration tests
+- ⏳ Additional protocol features and optimizations
+- ⏳ Comprehensive test coverage
+- ⏳ Documentation improvements
 
 ## Installation
 
@@ -39,20 +45,58 @@ go get avaneesh/dnp3-go
 
 ## Quick Start
 
-### Pluggable Channel Interface
+### Working Example: Master and Outstation over TCP
 
-The key innovation of this library is the `PhysicalChannel` interface - implement just 4 methods to plug in any transport:
+The library includes complete working examples demonstrating master and outstation communication over TCP.
+
+### Example: Master (TCP Client)
 
 ```go
-type PhysicalChannel interface {
-    Read(ctx context.Context) ([]byte, error)
-    Write(ctx context.Context, data []byte) error
-    Close() error
-    Statistics() TransportStats
+package main
+
+import (
+    "fmt"
+    "time"
+    "avaneesh/dnp3-go/pkg/dnp3"
+    "avaneesh/dnp3-go/pkg/channel"
+)
+
+func main() {
+    // Create TCP channel (client connects to outstation)
+    tcpConfig := channel.TCPChannelConfig{
+        Address:        "127.0.0.1:20000",
+        IsServer:       false,  // Client mode
+        ReconnectDelay: 5 * time.Second,
+        ReadTimeout:    30 * time.Second,
+    }
+
+    tcpChannel, _ := channel.NewTCPChannel(tcpConfig)
+
+    // Create manager and add channel
+    manager := dnp3.NewManager()
+    dnp3Channel, _ := manager.AddChannel("channel1", tcpChannel)
+
+    // Configure master
+    config := dnp3.DefaultMasterConfig()
+    config.LocalAddress = 1   // Master address
+    config.RemoteAddress = 10  // Outstation address
+
+    // Create master with callbacks
+    master, _ := dnp3Channel.AddMaster(config, &MyCallbacks{})
+    master.Enable()
+
+    // Perform integrity scan
+    master.ScanIntegrity()
+
+    // Add periodic scanning
+    master.AddIntegrityScan(60 * time.Second)
+    master.AddClassScan(dnp3.Class1, 10 * time.Second)
 }
 ```
 
-### Example: Master (Coming in Phase 4)
+See [examples/simple_master.go](examples/simple_master.go) for the complete working example.
+
+### Example: Outstation (TCP Server)
 
 ```go
 package main
@@ -60,58 +104,59 @@ package main
 import (
     "time"
     "avaneesh/dnp3-go/pkg/dnp3"
+    "avaneesh/dnp3-go/pkg/types"
+    "avaneesh/dnp3-go/pkg/channel"
 )
 
 func main() {
-    // Create manager
-    manager := dnp3.NewManager()
-    defer manager.Shutdown()
-
-    // User provides custom transport (TCP, Serial, etc.)
-    physicalChannel := NewMyTCPChannel("127.0.0.1:20000")
-
-    // Create channel
-    channel, _ := manager.AddChannel("channel1", physicalChannel)
-
-    // Add master with callbacks
-    config := dnp3.MasterConfig{
-        LocalAddress:    1,
-        RemoteAddress:   10,
-        ResponseTimeout: 5 * time.Second,
+    // Create TCP channel (server listens for connections)
+    tcpConfig := channel.TCPChannelConfig{
+        Address:  "127.0.0.1:20000",
+        IsServer: true,  // Server mode
     }
 
-    master, _ := channel.AddMaster(config, &MyCallbacks{})
-    master.Enable()
+    tcpChannel, _ := channel.NewTCPChannel(tcpConfig)
 
-    // Perform operations
-    master.AddIntegrityScan(60 * time.Second)
-    master.DirectOperate(commands)
+    // Create manager and add channel
+    manager := dnp3.NewManager()
+    dnp3Channel, _ := manager.AddChannel("channel1", tcpChannel)
+
+    // Configure database with 10 binary, analog, and counter points
+    dbConfig := dnp3.DatabaseConfig{
+        Binary:  make([]dnp3.BinaryPointConfig, 10),
+        Analog:  make([]dnp3.AnalogPointConfig, 10),
+        Counter: make([]dnp3.CounterPointConfig, 10),
+    }
+
+    // Configure outstation
+    config := dnp3.DefaultOutstationConfig()
+    config.LocalAddress = 10   // Outstation address
+    config.RemoteAddress = 1   // Master address
+    config.Database = dbConfig
+
+    // Create outstation
+    outstation, _ := dnp3Channel.AddOutstation(config, &MyCallbacks{})
+    outstation.Enable()
+
+    // Update measurements atomically
+    builder := dnp3.NewUpdateBuilder()
+    builder.UpdateBinary(types.Binary{
+        Value: true,
+        Flags: types.FlagOnline,
+        Time:  types.Now(),
+    }, 0, dnp3.EventModeDetect)
+
+    builder.UpdateAnalog(types.Analog{
+        Value: 123.45,
+        Flags: types.FlagOnline,
+        Time:  types.Now(),
+    }, 0, dnp3.EventModeDetect)
+
+    outstation.Apply(builder.Build())
 }
 ```
 
-### Example: Outstation (Coming in Phase 5)
-
-```go
-// Create outstation
-config := dnp3.OutstationConfig{
-    LocalAddress:  10,
-    RemoteAddress: 1,
-    Database:      dbConfig,
-}
-
-outstation, _ := channel.AddOutstation(config, &MyCallbacks{})
-outstation.Enable()
-
-// Update measurements atomically
-builder := dnp3.NewUpdateBuilder()
-builder.UpdateBinary(types.Binary{
-    Value: true,
-    Flags: types.FlagOnline,
-    Time:  types.Now(),
-}, 0, dnp3.EventModeDetect)
-
-outstation.Apply(builder.Build())
-```
+See [examples/simple_client.go](examples/simple_client.go) for the complete working outstation example.
 
 ## Architecture
 
@@ -131,41 +176,66 @@ DNP3Manager
               └─> Command Handler
 ```
 
+## Running the Examples
+
+### Start the Outstation (Server)
+
+```bash
+cd examples
+go run simple_client.go
+```
+
+The outstation will listen on `127.0.0.1:20000` and simulate changing sensor values.
+
+### Start the Master (Client)
+
+In a separate terminal:
+
+```bash
+cd examples
+go run simple_master.go
+```
+
+The master will connect to the outstation and display:
+- Binary inputs (breaker states)
+- Analog inputs (temperature, voltage, current, power sensors)
+- Counter values (energy meters)
+
 ## Pluggable Transports
 
-See [examples/custom_channel/mock_channel.go](examples/custom_channel/mock_channel.go) for implementation examples.
-
-### TCP Transport Example
+The library includes built-in TCP and UDP channels. You can also implement custom transports by implementing the `PhysicalChannel` interface:
 
 ```go
-type TCPChannel struct {
-    conn net.Conn
-}
-
-func (t *TCPChannel) Read(ctx context.Context) ([]byte, error) {
-    // Read from TCP connection
-}
-
-func (t *TCPChannel) Write(ctx context.Context, data []byte) error {
-    // Write to TCP connection
+type PhysicalChannel interface {
+    Read(ctx context.Context) ([]byte, error)
+    Write(ctx context.Context, data []byte) error
+    Close() error
+    Statistics() TransportStats
 }
 ```
 
-### Serial Transport Example
+### Built-in Transports
 
+**TCP Channel** - Full duplex TCP with automatic reconnection:
 ```go
-type SerialChannel struct {
-    port *serial.Port
+tcpConfig := channel.TCPChannelConfig{
+    Address:        "127.0.0.1:20000",
+    IsServer:       false,  // true for server, false for client
+    ReconnectDelay: 5 * time.Second,
 }
-
-func (s *SerialChannel) Read(ctx context.Context) ([]byte, error) {
-    // Read from serial port
-}
-
-func (s *SerialChannel) Write(ctx context.Context, data []byte) error {
-    // Write to serial port
-}
+tcpChannel, _ := channel.NewTCPChannel(tcpConfig)
 ```
+
+**UDP Channel** - Datagram-based communication:
+```go
+udpConfig := channel.UDPChannelConfig{
+    LocalAddress:  "0.0.0.0:20000",
+    RemoteAddress: "127.0.0.1:20001",
+}
+udpChannel, _ := channel.NewUDPChannel(udpConfig)
+```
+
+See [examples/simple_example.go](examples/simple_example.go) for custom channel implementation examples.
 
 ## DNP3 Protocol Support
 
@@ -201,25 +271,70 @@ func (s *SerialChannel) Write(ctx context.Context, data []byte) error {
 - User callbacks run in separate goroutines (non-blocking)
 - Thread-safe operations throughout
 
+## Build Instructions
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd dnp3-go
+
+# Build the library
+go build ./...
+
+# Run the examples
+cd examples
+
+# Terminal 1 - Start outstation (server)
+go run simple_client.go
+
+# Terminal 2 - Start master (client)
+go run simple_master.go
+```
+
 ## Development Roadmap
 
-### Phase 1: Foundation ✅
-- Core types, link layer CRC, basic parsing
+### Phase 1-5: Complete ✅
+- ✅ Core types, link layer, transport, application layers
+- ✅ Pluggable transport abstraction
+- ✅ TCP and UDP channels with auto-reconnect
+- ✅ Full master implementation (scanning, commands, unsolicited)
+- ✅ Full outstation implementation (database, events)
+- ✅ Working examples demonstrating master/outstation communication
 
-### Phase 2: Protocol Stack ✅
-- Complete 3-layer DNP3 protocol stack
+### Phase 6: In Progress ⏳
+- ⏳ Comprehensive test coverage
+- ⏳ Performance optimizations
+- ⏳ Additional transport implementations (Serial)
+- ⏳ Advanced protocol features
 
-### Phase 3: Channel Infrastructure ✅
-- Pluggable transport abstraction
+## Features Implemented
 
-### Phase 4: Master Implementation ⏳
-- Full master with scanning and commands
+### Master (Client)
+- ✅ Integrity scans (Class 0)
+- ✅ Class scans (Class 1, 2, 3)
+- ✅ Periodic scanning
+- ✅ DIRECT OPERATE commands
+- ✅ SELECT/OPERATE commands
+- ✅ Unsolicited response handling
+- ✅ IIN flag processing
+- ✅ Response timeout handling
+- ✅ Automatic retry logic
 
-### Phase 5: Outstation Implementation ⏳
-- Full outstation with database
+### Outstation (Server)
+- ✅ Static data responses
+- ✅ Event generation with deadbands
+- ✅ Unsolicited responses
+- ✅ Command processing (CROB, Analog Output)
+- ✅ Database management
+- ✅ Event buffering
+- ✅ Class assignment
+- ✅ Time synchronization
 
-### Phase 6: Testing & Examples ⏳
-- Comprehensive tests and documentation
+### Channels
+- ✅ TCP client/server with auto-reconnect
+- ✅ UDP datagram support
+- ✅ Connection statistics
+- ✅ Pluggable architecture for custom transports
 
 ## References
 
@@ -235,7 +350,3 @@ This implementation is based on:
 ## Contributing
 
 Contributions welcome! This project is actively under development.
-
----
-
-**Note:** This library is in active development. Phases 4-6 (Master, Outstation, Examples) are in progress. The pluggable channel interface and protocol stack are complete and ready to use.
