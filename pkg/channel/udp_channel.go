@@ -267,6 +267,12 @@ func (uc *UDPChannel) Statistics() TransportStats {
 	}
 }
 
+// SetConnectionStateListener sets a listener for connection state changes
+// For UDP, this is a no-op as UDP is connectionless
+func (uc *UDPChannel) SetConnectionStateListener(listener ConnectionStateListener) {
+	// UDP is connectionless, so we don't notify about connection state changes
+}
+
 // IsConnected returns true if the connection is open
 // Note: For UDP, this just means the socket is bound
 func (uc *UDPChannel) IsConnected() bool {

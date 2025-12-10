@@ -19,6 +19,18 @@ type Session interface {
 	Type() SessionType
 }
 
+// SessionWithConnectionState is an optional interface that sessions can implement
+// to receive connection state notifications
+type SessionWithConnectionState interface {
+	Session
+
+	// OnConnectionEstablished is called when the underlying connection is established
+	OnConnectionEstablished()
+
+	// OnConnectionLost is called when the underlying connection is lost
+	OnConnectionLost()
+}
+
 // SessionType identifies the type of session
 type SessionType int
 
@@ -126,4 +138,28 @@ func (r *Router) Clear() {
 	defer r.mu.Unlock()
 
 	r.sessions = make(map[uint16]Session)
+}
+
+// NotifyConnectionEstablished notifies all sessions that support connection state
+func (r *Router) NotifyConnectionEstablished() {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, session := range r.sessions {
+		if cs, ok := session.(SessionWithConnectionState); ok {
+			cs.OnConnectionEstablished()
+		}
+	}
+}
+
+// NotifyConnectionLost notifies all sessions that support connection state
+func (r *Router) NotifyConnectionLost() {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, session := range r.sessions {
+		if cs, ok := session.(SessionWithConnectionState); ok {
+			cs.OnConnectionLost()
+		}
+	}
 }

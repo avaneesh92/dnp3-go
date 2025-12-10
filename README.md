@@ -281,7 +281,13 @@ cd dnp3-go
 # Build the library
 go build ./...
 
-# Run the examples
+# Run tests
+go test ./pkg/...
+
+# Run tests with coverage
+go test -cover ./pkg/...
+
+# Run examples
 cd examples
 
 # Terminal 1 - Start outstation (server)
@@ -289,6 +295,29 @@ go run simple_client.go
 
 # Terminal 2 - Start master (client)
 go run simple_master.go
+```
+
+## Testing
+
+The library includes comprehensive test coverage for critical protocol components:
+
+- **Link Layer**: CRC-16 calculations, frame serialization/parsing
+- **Types**: Quality flags, measurements, timestamps
+- **Test Coverage**: ~90% for tested components
+- **Benchmarks**: Performance testing for critical paths
+
+See [TESTING_SUMMARY.md](TESTING_SUMMARY.md) for details.
+
+```bash
+# Run all tests
+go test ./pkg/...
+
+# Run with coverage report
+go test -coverprofile=coverage.out ./pkg/...
+go tool cover -html=coverage.out
+
+# Run benchmarks
+go test -bench=. ./pkg/...
 ```
 
 ## Development Roadmap

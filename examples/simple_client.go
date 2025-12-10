@@ -95,7 +95,7 @@ func exampleOutstation() {
 	// Create your custom transport
 	// Create TCP channel (server mode - listens for incoming connections)
 	tcpConfig := channel.TCPChannelConfig{
-		Address:      "127.0.0.1:20000", // Listen on all interfaces
+		Address:      "127.0.0.1:22150", // Listen on all interfaces
 		IsServer:     true,             // Server mode
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 10 * time.Second,

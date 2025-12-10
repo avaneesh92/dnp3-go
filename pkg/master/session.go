@@ -33,12 +33,14 @@ func (s *session) OnReceive(frame *link.Frame) error {
 	// Process through transport layer
 	apdu, err := s.transport.Receive(frame.UserData)
 	if err != nil {
-		s.master.logger.Error("Master session %d: Transport error: %v", s.linkAddress, err)
-		return err
+		// Only log critical errors (buffer overflow)
+		// Sequence errors and missing FIR are now handled silently by auto-recovery
+		s.master.logger.Debug("Master session %d: Transport error: %v", s.linkAddress, err)
+		return nil // Don't propagate error, let transport layer recover
 	}
 
 	if apdu == nil {
-		// Not complete yet, waiting for more segments
+		// Not complete yet, waiting for more segments (or discarded out-of-sync segment)
 		return nil
 	}
 
@@ -54,6 +56,18 @@ func (s *session) LinkAddress() uint16 {
 // Type returns the session type (implements channel.Session)
 func (s *session) Type() channel.SessionType {
 	return channel.SessionTypeMaster
+}
+
+// OnConnectionEstablished resets transport layer when connection is established (implements channel.SessionWithConnectionState)
+func (s *session) OnConnectionEstablished() {
+	s.master.logger.Info("Master session %d: Connection established, resetting transport layer", s.linkAddress)
+	s.transport.Reset()
+}
+
+// OnConnectionLost handles connection loss (implements channel.SessionWithConnectionState)
+func (s *session) OnConnectionLost() {
+	s.master.logger.Info("Master session %d: Connection lost", s.linkAddress)
+	s.transport.Reset()
 }
 
 // sendAPDU sends an APDU through the channel

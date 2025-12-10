@@ -50,7 +50,7 @@ func New(id string, physical PhysicalChannel, log logger.Logger) *Channel {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Channel{
+	c := &Channel{
 		id:              id,
 		physicalChannel: physical,
 		router:          NewRouter(),
@@ -61,6 +61,11 @@ func New(id string, physical PhysicalChannel, log logger.Logger) *Channel {
 		cancel:          cancel,
 		writeQueue:      make(chan *writeRequest, 100),
 	}
+
+	// Set channel as connection state listener
+	physical.SetConnectionStateListener(c)
+
+	return c
 }
 
 // ID returns the channel ID
@@ -262,4 +267,18 @@ func (c *Channel) State() ChannelState {
 func (c *Channel) String() string {
 	return fmt.Sprintf("Channel{ID=%s, State=%s, Sessions=%d}",
 		c.id, c.State(), c.router.GetSessionCount())
+}
+
+// OnConnectionEstablished is called when a connection is established (implements ConnectionStateListener)
+func (c *Channel) OnConnectionEstablished() {
+	c.logger.Info("Channel %s: Connection established", c.id)
+	// Notify all sessions to reset their transport layers
+	c.router.NotifyConnectionEstablished()
+}
+
+// OnConnectionLost is called when a connection is lost (implements ConnectionStateListener)
+func (c *Channel) OnConnectionLost() {
+	c.logger.Info("Channel %s: Connection lost", c.id)
+	// Notify all sessions about connection loss
+	c.router.NotifyConnectionLost()
 }

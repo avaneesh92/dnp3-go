@@ -24,6 +24,10 @@ type TCPChannel struct {
 	readTimeout    time.Duration
 	writeTimeout   time.Duration
 
+	// Connection state listener
+	stateListener     ConnectionStateListener
+	stateListenerLock sync.RWMutex
+
 	// Statistics
 	stats struct {
 		bytesSent     atomic.Uint64
@@ -142,6 +146,7 @@ func (tc *TCPChannel) acceptLoop() {
 
 		// Close existing connection if any
 		tc.connLock.Lock()
+		hadConnection := tc.conn != nil
 		if tc.conn != nil {
 			tc.conn.Close()
 			tc.stats.disconnects.Add(1)
@@ -149,6 +154,12 @@ func (tc *TCPChannel) acceptLoop() {
 		tc.conn = conn
 		tc.stats.connects.Add(1)
 		tc.connLock.Unlock()
+
+		// Notify connection state change
+		if hadConnection {
+			tc.notifyConnectionLost()
+		}
+		tc.notifyConnectionEstablished()
 	}
 }
 
@@ -163,6 +174,9 @@ func (tc *TCPChannel) connect() error {
 	tc.conn = conn
 	tc.stats.connects.Add(1)
 	tc.connLock.Unlock()
+
+	// Notify connection established
+	tc.notifyConnectionEstablished()
 
 	// Start reconnection handler for clients
 	tc.wg.Add(1)
@@ -193,6 +207,9 @@ func (tc *TCPChannel) reconnectLoop() {
 					tc.conn = newConn
 					tc.stats.connects.Add(1)
 					tc.connLock.Unlock()
+
+					// Notify connection re-established
+					tc.notifyConnectionEstablished()
 				}
 			}
 		}
@@ -381,12 +398,17 @@ func (tc *TCPChannel) handleReadError(err error) {
 	tc.stats.readErrors.Add(1)
 
 	tc.connLock.Lock()
-	defer tc.connLock.Unlock()
-
+	hadConnection := tc.conn != nil
 	if tc.conn != nil {
 		tc.conn.Close()
 		tc.stats.disconnects.Add(1)
 		tc.conn = nil
+	}
+	tc.connLock.Unlock()
+
+	// Notify connection lost
+	if hadConnection {
+		tc.notifyConnectionLost()
 	}
 }
 
@@ -395,12 +417,17 @@ func (tc *TCPChannel) handleWriteError(err error) {
 	tc.stats.writeErrors.Add(1)
 
 	tc.connLock.Lock()
-	defer tc.connLock.Unlock()
-
+	hadConnection := tc.conn != nil
 	if tc.conn != nil {
 		tc.conn.Close()
 		tc.stats.disconnects.Add(1)
 		tc.conn = nil
+	}
+	tc.connLock.Unlock()
+
+	// Notify connection lost
+	if hadConnection {
+		tc.notifyConnectionLost()
 	}
 }
 
@@ -429,4 +456,33 @@ func (tc *TCPChannel) RemoteAddr() net.Addr {
 		return tc.conn.RemoteAddr()
 	}
 	return nil
+}
+
+// SetConnectionStateListener sets a listener for connection state changes
+func (tc *TCPChannel) SetConnectionStateListener(listener ConnectionStateListener) {
+	tc.stateListenerLock.Lock()
+	defer tc.stateListenerLock.Unlock()
+	tc.stateListener = listener
+}
+
+// notifyConnectionEstablished notifies the listener that a connection was established
+func (tc *TCPChannel) notifyConnectionEstablished() {
+	tc.stateListenerLock.RLock()
+	listener := tc.stateListener
+	tc.stateListenerLock.RUnlock()
+
+	if listener != nil {
+		listener.OnConnectionEstablished()
+	}
+}
+
+// notifyConnectionLost notifies the listener that a connection was lost
+func (tc *TCPChannel) notifyConnectionLost() {
+	tc.stateListenerLock.RLock()
+	listener := tc.stateListener
+	tc.stateListenerLock.RUnlock()
+
+	if listener != nil {
+		listener.OnConnectionLost()
+	}
 }

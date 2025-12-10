@@ -2,6 +2,15 @@ package channel
 
 import "context"
 
+// ConnectionStateListener receives notifications about connection state changes
+type ConnectionStateListener interface {
+	// OnConnectionEstablished is called when a new connection is established
+	OnConnectionEstablished()
+
+	// OnConnectionLost is called when a connection is lost
+	OnConnectionLost()
+}
+
 // PhysicalChannel represents a pluggable transport layer
 // Users implement this interface to provide TCP, Serial, or any custom transport
 // This is THE KEY INTERFACE that enables pluggable transports
@@ -24,6 +33,10 @@ type PhysicalChannel interface {
 	// Statistics returns transport-level statistics
 	// Optional - can return zero values if not tracked
 	Statistics() TransportStats
+
+	// SetConnectionStateListener sets a listener for connection state changes
+	// Optional - channels that don't support connection state notifications can ignore this
+	SetConnectionStateListener(listener ConnectionStateListener)
 }
 
 // TransportStats provides transport-level statistics

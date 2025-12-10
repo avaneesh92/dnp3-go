@@ -41,14 +41,16 @@ func (r *Reassembler) Process(segment *Segment) ([]byte, error) {
 		r.expectedSeq = segment.Seq
 	} else if !r.inProgress {
 		// Received non-FIR segment when not reassembling
-		return nil, ErrMissingFIR
+		// This can happen after connection reset or transport desync
+		// Silently discard and wait for FIR segment to resynchronize
+		return nil, nil
 	}
 
 	// Verify sequence number
 	if segment.Seq != r.expectedSeq {
-		// Sequence error - reset reassembly
+		// Sequence error - reset reassembly and wait for next FIR
 		r.Reset()
-		return nil, ErrInvalidSequence
+		return nil, nil
 	}
 
 	// Add data to buffer
