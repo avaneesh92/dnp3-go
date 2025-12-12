@@ -154,6 +154,9 @@ func (c *Channel) readLoop() {
 			continue
 		}
 
+		// Log received frame if debugging enabled
+		logger.LogFrameReceived(c.id, data)
+
 		// Parse link frame
 		frame, _, err := link.Parse(data)
 		if err != nil {
@@ -194,6 +197,9 @@ func (c *Channel) writeLoop() {
 			}
 
 		case req := <-c.writeQueue:
+			// Log sent frame if debugging enabled
+			logger.LogFrameSent(c.id, req.data)
+
 			// Write to physical channel
 			err := c.physicalChannel.Write(c.ctx, req.data)
 			if err != nil {

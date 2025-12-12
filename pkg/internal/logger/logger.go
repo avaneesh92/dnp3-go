@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 )
 
 // Level represents logging level
@@ -114,6 +116,18 @@ func (l *NoOpLogger) SetLevel(level Level) {}
 // Global default logger
 var defaultLogger Logger = NewDefaultLogger(LevelInfo)
 
+// Global frame debugging flag
+var enableFrameDebug bool
+
+func init() {
+	// Check environment variable DNP3_FRAME_DEBUG
+	if val := os.Getenv("DNP3_FRAME_DEBUG"); val != "" {
+		if enabled, err := strconv.ParseBool(val); err == nil {
+			enableFrameDebug = enabled
+		}
+	}
+}
+
 // SetDefault sets the default logger
 func SetDefault(logger Logger) {
 	defaultLogger = logger
@@ -159,4 +173,83 @@ func Logf(level Level, format string, args ...interface{}) {
 	case LevelError:
 		defaultLogger.Error(msg)
 	}
+}
+
+// Frame debugging functions
+
+// SetFrameDebug enables or disables frame debugging
+func SetFrameDebug(enable bool) {
+	enableFrameDebug = enable
+}
+
+// IsFrameDebugEnabled returns whether frame debugging is enabled
+func IsFrameDebugEnabled() bool {
+	return enableFrameDebug
+}
+
+// LogFrameReceived logs a received frame with detailed hex dump if frame debugging is enabled
+func LogFrameReceived(channelID string, data []byte) {
+	if !enableFrameDebug {
+		return
+	}
+
+	defaultLogger.Info("<<< FRAME RECEIVED [Channel: %s] (%d bytes)", channelID, len(data))
+	defaultLogger.Info("%s", formatFrameHex(data))
+}
+
+// LogFrameSent logs a sent frame with detailed hex dump if frame debugging is enabled
+func LogFrameSent(channelID string, data []byte) {
+	if !enableFrameDebug {
+		return
+	}
+
+	defaultLogger.Info(">>> FRAME SENT [Channel: %s] (%d bytes)", channelID, len(data))
+	defaultLogger.Info("%s", formatFrameHex(data))
+}
+
+// formatFrameHex formats a byte array as a detailed hex dump
+// Format: offset | hex bytes (16 per line) | ASCII representation
+func formatFrameHex(data []byte) string {
+	if len(data) == 0 {
+		return "    <empty>"
+	}
+
+	var sb strings.Builder
+	const bytesPerLine = 16
+
+	for i := 0; i < len(data); i += bytesPerLine {
+		// Offset
+		sb.WriteString(fmt.Sprintf("    %04X | ", i))
+
+		// Hex bytes
+		end := i + bytesPerLine
+		if end > len(data) {
+			end = len(data)
+		}
+
+		for j := i; j < end; j++ {
+			sb.WriteString(fmt.Sprintf("%02X ", data[j]))
+		}
+
+		// Padding for incomplete lines
+		for j := end; j < i+bytesPerLine; j++ {
+			sb.WriteString("   ")
+		}
+
+		// ASCII representation
+		sb.WriteString("| ")
+		for j := i; j < end; j++ {
+			if data[j] >= 32 && data[j] <= 126 {
+				sb.WriteByte(data[j])
+			} else {
+				sb.WriteByte('.')
+			}
+		}
+
+		if i+bytesPerLine < len(data) {
+			sb.WriteString("\n")
+		}
+	}
+
+	return sb.String()
 }

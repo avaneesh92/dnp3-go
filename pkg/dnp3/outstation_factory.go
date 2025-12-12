@@ -248,6 +248,18 @@ func (b *UpdateBuilder) UpdateCounter(value types.Counter, index uint16, mode Ev
 	return b
 }
 
+// UpdateDoubleBitBinary updates a double-bit binary point
+func (b *UpdateBuilder) UpdateDoubleBitBinary(value types.DoubleBitBinary, index uint16, mode EventMode) *UpdateBuilder {
+	b.builder.UpdateDoubleBitBinary(value, index, outstation.EventMode(mode))
+	return b
+}
+
+// UpdateFrozenCounter updates a frozen counter point
+func (b *UpdateBuilder) UpdateFrozenCounter(value types.FrozenCounter, index uint16, mode EventMode) *UpdateBuilder {
+	b.builder.UpdateFrozenCounter(value, index, outstation.EventMode(mode))
+	return b
+}
+
 // Build builds the updates
 func (b *UpdateBuilder) Build() *Updates {
 	internalUpdates := b.builder.Build()
