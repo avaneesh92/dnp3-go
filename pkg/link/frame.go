@@ -205,3 +205,151 @@ func (f *Frame) Clone() *Frame {
 		UserData:     userData,
 	}
 }
+
+// Convenience functions for creating common frame types
+
+// NewResetLinkFrame creates a RESET LINK frame (master to outstation)
+func NewResetLinkFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionMasterToOutstation,
+		PrimaryFrame,
+		FuncResetLink,
+		dst,
+		src,
+		nil,
+	)
+}
+
+// NewResetUserProcessFrame creates a RESET USER PROCESS frame
+func NewResetUserProcessFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionMasterToOutstation,
+		PrimaryFrame,
+		FuncResetUserProcess,
+		dst,
+		src,
+		nil,
+	)
+}
+
+// NewTestLinkFrame creates a TEST LINK STATES frame
+func NewTestLinkFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionMasterToOutstation,
+		PrimaryFrame,
+		FuncTestLinkStates,
+		dst,
+		src,
+		nil,
+	)
+}
+
+// NewConfirmedUserDataFrame creates a confirmed user data frame
+func NewConfirmedUserDataFrame(dst, src uint16, data []byte, fcb bool) *Frame {
+	frame := NewFrame(
+		DirectionMasterToOutstation,
+		PrimaryFrame,
+		FuncUserDataConfirmed,
+		dst,
+		src,
+		data,
+	)
+	frame.SetFCB(fcb)
+	return frame
+}
+
+// NewUnconfirmedUserDataFrame creates an unconfirmed user data frame (master to outstation)
+func NewUnconfirmedUserDataFrame(dst, src uint16, data []byte) *Frame {
+	return NewFrame(
+		DirectionMasterToOutstation,
+		PrimaryFrame,
+		FuncUserDataUnconfirmed,
+		dst,
+		src,
+		data,
+	)
+}
+
+// NewRequestLinkStatusFrame creates a REQUEST LINK STATUS frame
+func NewRequestLinkStatusFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionMasterToOutstation,
+		PrimaryFrame,
+		FuncRequestLinkStatus,
+		dst,
+		src,
+		nil,
+	)
+}
+
+// NewACKFrame creates an ACK frame (outstation to master)
+func NewACKFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionOutstationToMaster,
+		SecondaryFrame,
+		FuncAck,
+		dst,
+		src,
+		nil,
+	)
+}
+
+// NewNACKFrame creates a NACK frame (outstation to master)
+func NewNACKFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionOutstationToMaster,
+		SecondaryFrame,
+		FuncNack,
+		dst,
+		src,
+		nil,
+	)
+}
+
+// NewLinkStatusFrame creates a LINK STATUS response frame
+func NewLinkStatusFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionOutstationToMaster,
+		SecondaryFrame,
+		FuncLinkStatusResponse,
+		dst,
+		src,
+		nil,
+	)
+}
+
+// NewUnsolicitedFrame creates an unsolicited response frame (outstation to master)
+func NewUnsolicitedFrame(dst, src uint16, data []byte) *Frame {
+	return NewFrame(
+		DirectionOutstationToMaster,
+		SecondaryFrame,
+		FuncUserDataUnconfirmed,
+		dst,
+		src,
+		data,
+	)
+}
+
+// NewLinkNotFunctioningFrame creates a LINK NOT FUNCTIONING response
+func NewLinkNotFunctioningFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionOutstationToMaster,
+		SecondaryFrame,
+		FuncLinkNotFunctioning,
+		dst,
+		src,
+		nil,
+	)
+}
+
+// NewLinkNotUsedFrame creates a LINK NOT USED response
+func NewLinkNotUsedFrame(dst, src uint16) *Frame {
+	return NewFrame(
+		DirectionOutstationToMaster,
+		SecondaryFrame,
+		FuncLinkNotUsed,
+		dst,
+		src,
+		nil,
+	)
+}

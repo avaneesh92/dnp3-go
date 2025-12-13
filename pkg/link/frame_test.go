@@ -38,7 +38,7 @@ func TestNewFrame(t *testing.T) {
 			name:      "Empty data",
 			dir:       DirectionMasterToOutstation,
 			isPrimary: PrimaryFrame,
-			fc:        FuncResetLinkStates,
+			fc:        FuncResetLink,
 			dst:       100,
 			src:       1,
 			data:      []byte{},
@@ -93,7 +93,7 @@ func TestFrame_ControlByte(t *testing.T) {
 			name:            "Master to outstation, primary, reset",
 			dir:             DirectionMasterToOutstation,
 			isPrimary:       PrimaryFrame,
-			fc:              FuncResetLinkStates,
+			fc:              FuncResetLink,
 			expectedControl: 0xC0, // DIR(1) | PRM(1) | FC(0000) = 11000000
 		},
 		{
@@ -101,7 +101,7 @@ func TestFrame_ControlByte(t *testing.T) {
 			dir:             DirectionMasterToOutstation,
 			isPrimary:       PrimaryFrame,
 			fc:              FuncUserDataConfirmed,
-			expectedControl: 0xC4, // DIR(1) | PRM(1) | FC(0100) = 11000100
+			expectedControl: 0xC3, // DIR(1) | PRM(1) | FC(0011) = 11000011
 		},
 		{
 			name:            "Outstation to master, secondary, ack",
@@ -182,7 +182,7 @@ func TestFrame_Serialize(t *testing.T) {
 	}{
 		{
 			name:    "Empty data frame",
-			frame:   NewFrame(DirectionMasterToOutstation, PrimaryFrame, FuncResetLinkStates, 10, 1, nil),
+			frame:   NewFrame(DirectionMasterToOutstation, PrimaryFrame, FuncResetLink, 10, 1, nil),
 			wantErr: false,
 		},
 		{
@@ -253,7 +253,7 @@ func TestFrame_SerializeParse_RoundTrip(t *testing.T) {
 	}{
 		{
 			name:  "Empty data",
-			frame: NewFrame(DirectionMasterToOutstation, PrimaryFrame, FuncResetLinkStates, 10, 1, nil),
+			frame: NewFrame(DirectionMasterToOutstation, PrimaryFrame, FuncResetLink, 10, 1, nil),
 		},
 		{
 			name:  "Small data",
@@ -469,7 +469,7 @@ func TestFrame_String(t *testing.T) {
 
 // TestFrame_ParseMultipleFrames tests parsing multiple frames from buffer
 func TestFrame_ParseMultipleFrames(t *testing.T) {
-	frame1 := NewFrame(DirectionMasterToOutstation, PrimaryFrame, FuncResetLinkStates, 10, 1, nil)
+	frame1 := NewFrame(DirectionMasterToOutstation, PrimaryFrame, FuncResetLink, 10, 1, nil)
 	frame2 := NewFrame(DirectionMasterToOutstation, PrimaryFrame, FuncUserDataUnconfirmed, 10, 1, []byte{0x01, 0x02})
 	frame3 := NewFrame(DirectionOutstationToMaster, SecondaryFrame, FuncAck, 1, 10, nil)
 
@@ -485,8 +485,8 @@ func TestFrame_ParseMultipleFrames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse frame 1 error = %v", err)
 	}
-	if parsed1.FunctionCode != FuncResetLinkStates {
-		t.Errorf("Frame 1 FunctionCode = %v, want %v", parsed1.FunctionCode, FuncResetLinkStates)
+	if parsed1.FunctionCode != FuncResetLink {
+		t.Errorf("Frame 1 FunctionCode = %v, want %v", parsed1.FunctionCode, FuncResetLink)
 	}
 
 	// Parse frame 2
