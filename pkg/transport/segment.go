@@ -2,7 +2,7 @@ package transport
 
 // Transport layer constants
 const (
-	MaxSegmentSize = 249 // Maximum transport segment size (250 - 1 for header)
+	MaxSegmentSize = 248 // Maximum application data per segment (250 - 1 header - 1 byte reserved)
 	HeaderSize     = 1   // Transport header is 1 byte
 )
 
