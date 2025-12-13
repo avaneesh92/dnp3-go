@@ -1,0 +1,706 @@
+================================================================================
+DNP3 TRANSPORT LAYER - HEADER FORMAT AND BEHAVIOR
+================================================================================
+
+TRANSPORT HEADER LOCATION:
+- First byte of Data Link Layer user data field
+- Located immediately after Data Link Header CRC
+- Precedes all Application Layer data
+
+FRAME STRUCTURE:
+[Data Link Header (10B)][Transport Header (1B)][Application Data (≤248B)][CRCs]
+                         └────────────────────────────────────────────────┘
+                                    User Data (≤249 bytes)
+
+================================================================================
+TRANSPORT HEADER FORMAT (1 BYTE)
+================================================================================
+
+Bit Layout:
+    Bit 7      Bit 6      Bits 5-0
+   ┌──────┬──────────┬──────────────┐
+   │ FIN  │   FIR    │   SEQUENCE   │
+   └──────┴──────────┴──────────────┘
+
+Field Definitions:
+
+BIT 7 - FIN (Final Fragment)
+   Value: 0 or 1
+   
+   FIN = 1:
+   - This is the LAST fragment of the message
+   - Receiver should assemble and deliver complete message
+   - Next fragment (if any) starts a new message
+   
+   FIN = 0:
+   - More fragments follow for this message
+   - Receiver should buffer and wait for more
+   - Do NOT deliver to application layer yet
+
+
+BIT 6 - FIR (First Fragment)
+   Value: 0 or 1
+   
+   FIR = 1:
+   - This is the FIRST fragment of a new message
+   - Receiver should discard any incomplete previous message
+   - Start buffering new message
+   - Sequence number establishes starting point
+   
+   FIR = 0:
+   - This is a continuation fragment
+   - Must follow previous fragment in sequence
+   - Receiver continues assembly of current message
+
+
+BITS 5-0 - SEQUENCE NUMBER
+   Value: 0 to 63 (6 bits)
+   
+   Purpose:
+   - Orders fragments within a message
+   - Detects missing/duplicate/out-of-order fragments
+   - Wraps around: 0→1→2→...→62→63→0
+   
+   Behavior:
+   - First fragment: Can start at ANY value (0-63)
+   - Subsequent fragments: Increment by 1, modulo 64
+   - Each fragment in message has consecutive sequence
+
+
+================================================================================
+FRAGMENT TYPE COMBINATIONS
+================================================================================
+
+TYPE 1: Single Fragment Message (Complete in one fragment)
+   FIR = 1, FIN = 1, SEQ = any
+   Hex Range: 0xC0 - 0xFF
+   
+   Example: 0xC0 (FIR=1, FIN=1, SEQ=0)
+           11000000
+           ││└────┘
+           ││ SEQ=0
+           │└─ FIR=1 (first)
+           └── FIN=1 (final)
+   
+   Meaning:
+   - Entire application message fits in one fragment
+   - Most common for small messages (<248 bytes)
+   - Immediate delivery to application layer
+   
+   Usage:
+   - Short READ requests
+   - Small WRITE commands
+   - Acknowledgments
+   - Most routine traffic
+
+
+TYPE 2: First Fragment of Multi-Fragment Message
+   FIR = 1, FIN = 0, SEQ = starting sequence
+   Hex Range: 0x40 - 0x7F
+   
+   Example: 0x45 (FIR=1, FIN=0, SEQ=5)
+           01000101
+           ││└────┘
+           ││ SEQ=5
+           │└─ FIR=1 (first)
+           └── FIN=0 (not final)
+   
+   Meaning:
+   - Start of large message
+   - More fragments coming
+   - Establishes sequence baseline
+   
+   Usage:
+   - Large file transfers
+   - Bulk data reads
+   - Configuration downloads
+   - Messages >248 bytes
+
+
+TYPE 3: Middle Fragment (Continuation)
+   FIR = 0, FIN = 0, SEQ = incremented
+   Hex Range: 0x00 - 0x3F
+   
+   Example: 0x06 (FIR=0, FIN=0, SEQ=6)
+           00000110
+           ││└────┘
+           ││ SEQ=6
+           │└─ FIR=0 (not first)
+           └── FIN=0 (not final)
+   
+   Meaning:
+   - Continuation of message in progress
+   - Sequence must be previous + 1
+   - Buffer and wait for more
+   
+   Usage:
+   - Middle portions of large transfers
+   - Sequential data blocks
+
+
+TYPE 4: Final Fragment of Multi-Fragment Message
+   FIR = 0, FIN = 1, SEQ = final sequence
+   Hex Range: 0x80 - 0xBF
+   
+   Example: 0x87 (FIR=0, FIN=1, SEQ=7)
+           10000111
+           ││└────┘
+           ││ SEQ=7
+           │└─ FIR=0 (not first)
+           └── FIN=1 (final)
+   
+   Meaning:
+   - Last fragment of multi-fragment message
+   - Sequence must be previous + 1
+   - Deliver complete assembled message
+   
+   Usage:
+   - Completing large transfers
+   - Final block of data
+
+
+================================================================================
+TRANSPORT LAYER SEGMENTATION
+================================================================================
+
+Purpose:
+- Split large application messages into transmittable fragments
+- Data Link Layer limits user data to 250 bytes
+- Transport header uses 1 byte
+- Maximum application data per fragment = 248 bytes
+
+Segmentation Process (Sender):
+
+1. Receive application message from Application Layer
+2. Determine number of fragments needed:
+   Fragments = ceil(AppDataSize / 248)
+
+3. For each fragment:
+   a. Extract up to 248 bytes of application data
+   b. Create transport header:
+      - FIR = 1 if first fragment, else 0
+      - FIN = 1 if last fragment, else 0
+      - SEQ = current sequence number
+   c. Combine: [Transport Header][App Data Chunk]
+   d. Pass to Data Link Layer
+   e. Increment sequence number (mod 64)
+
+Example - 600 Byte Message:
+   Fragment 1: [FIR=1,FIN=0,SEQ=10][248 bytes] → 0x4A + data
+   Fragment 2: [FIR=0,FIN=0,SEQ=11][248 bytes] → 0x0B + data
+   Fragment 3: [FIR=0,FIN=1,SEQ=12][104 bytes] → 0x8C + data
+
+   Total: 248 + 248 + 104 = 600 bytes
+
+
+================================================================================
+TRANSPORT LAYER REASSEMBLY
+================================================================================
+
+Purpose:
+- Receive fragments from Data Link Layer
+- Detect errors and missing fragments
+- Assemble complete application message
+- Deliver to Application Layer
+
+Reassembly Process (Receiver):
+
+State Variables:
+   - receiving_message: boolean (currently assembling?)
+   - expected_seq: next expected sequence number
+   - message_buffer: accumulated application data
+   - reassembly_timer: timeout for incomplete messages
+
+Algorithm:
+
+1. Receive fragment from Data Link Layer
+2. Extract Transport Header
+3. Check FIR bit:
+   
+   IF FIR = 1:
+      - Discard any incomplete message in buffer
+      - Start new message
+      - Initialize expected_seq = (SEQ + 1) mod 64
+      - receiving_message = TRUE
+      - Start/restart reassembly_timer
+      
+      IF FIN = 1:
+         - Complete message in single fragment
+         - Deliver application data to Application Layer
+         - receiving_message = FALSE
+         - Stop reassembly_timer
+      ELSE:
+         - Buffer application data
+         - Wait for next fragment
+   
+   IF FIR = 0:
+      IF NOT receiving_message:
+         - ERROR: Continuation without FIR
+         - Discard fragment
+         - Wait for new FIR
+      ELSE:
+         - Verify SEQ = expected_seq
+         IF sequence mismatch:
+            - ERROR: Sequence gap/duplicate
+            - Discard entire message
+            - receiving_message = FALSE
+            - Wait for new FIR
+         ELSE:
+            - Append application data to buffer
+            - expected_seq = (expected_seq + 1) mod 64
+            
+            IF FIN = 1:
+               - Complete message received
+               - Deliver buffer to Application Layer
+               - receiving_message = FALSE
+               - Stop reassembly_timer
+            ELSE:
+               - Restart reassembly_timer
+               - Wait for next fragment
+
+
+================================================================================
+MASTER STATION TRANSPORT LAYER BEHAVIOR
+================================================================================
+
+Transmission (Master → Outstation):
+
+1. Request from Application Layer
+   - Receive application message (READ, WRITE, etc.)
+   - Determine fragmentation needed
+
+2. Segmentation
+   - If ≤248 bytes: Single fragment (FIR=1, FIN=1)
+   - If >248 bytes: Multiple fragments
+     * First: FIR=1, FIN=0
+     * Middle: FIR=0, FIN=0
+     * Last: FIR=0, FIN=1
+
+3. Sequence Management
+   - Maintain separate sequence counter per outstation
+   - Sequence can start at any value
+   - Increment for each fragment sent
+   - Wrap at 63 back to 0
+
+4. Fragment Transmission
+   - Send fragments sequentially
+   - Pass each to Data Link Layer
+   - Data Link handles retries/acknowledgments
+   - No transport layer ACK
+
+5. Multi-Fragment Strategy
+   - Send all fragments back-to-back OR
+   - Wait for Data Link ACK between fragments (implementation choice)
+   - Do NOT interleave fragments of different messages
+
+
+Reception (Outstation → Master):
+
+1. Receive Responses/Unsolicited
+   - Get fragments from Data Link Layer
+   - Check transport header
+
+2. Single Fragment (FIR=1, FIN=1)
+   - Immediate delivery to Application Layer
+   - No buffering needed
+
+3. Multi-Fragment Messages
+   - Buffer incoming fragments
+   - Verify sequence continuity
+   - Detect errors/gaps
+   - Deliver on FIN=1
+
+4. Error Handling
+   - Sequence gap: Discard incomplete message
+   - Timeout: Discard incomplete message
+   - New FIR: Abandon current, start new
+   - Log errors for diagnostics
+
+5. Multiple Outstations
+   - Maintain separate reassembly state per outstation
+   - Independent sequence tracking
+   - Separate buffers
+
+
+================================================================================
+OUTSTATION TRANSPORT LAYER BEHAVIOR
+================================================================================
+
+Transmission (Outstation → Master):
+
+1. Response Generation
+   - Application Layer provides response data
+   - Includes solicited responses and unsolicited
+
+2. Segmentation
+   - Same rules as Master
+   - Single or multi-fragment based on size
+   - Sequential fragment transmission
+
+3. Sequence Management
+   - Independent sequence counter for master direction
+   - Typically starts at 0 after startup
+   - Increments with each fragment
+
+4. Unsolicited Messages
+   - Use same transport mechanism
+   - Fragment if necessary
+   - Independent from solicited responses
+
+5. Fragment Delivery
+   - Pass to Data Link Layer
+   - May use confirmed or unconfirmed data link service
+   - Transport layer doesn't retry
+
+
+Reception (Master → Outstation):
+
+1. Receive Requests
+   - Get fragments from Data Link Layer
+   - Extract transport header
+
+2. Reassembly
+   - Follow standard reassembly algorithm
+   - Buffer multi-fragment messages
+   - Deliver complete message to Application Layer
+
+3. Error Detection
+   - Sequence errors → discard message
+   - Timeout → discard incomplete message
+   - New request arrives → can interrupt current assembly
+
+4. Processing
+   - Complete message → Application Layer processes
+   - Generate response
+   - Fragment response if needed
+
+5. State Management
+   - Track reassembly state
+   - Timer management
+   - Buffer management
+
+
+================================================================================
+SEQUENCE NUMBER EXAMPLES
+================================================================================
+
+Example 1: Simple Single Fragment
+   Master → Outstation: 0xC5 (FIR=1, FIN=1, SEQ=5)
+   - Complete message, no assembly needed
+   - Application Layer processes immediately
+
+Example 2: Three Fragment Message
+   Master → Outstation:
+      Fragment 1: 0x40 (FIR=1, FIN=0, SEQ=0) [248 bytes data]
+      Fragment 2: 0x01 (FIR=0, FIN=0, SEQ=1) [248 bytes data]
+      Fragment 3: 0x82 (FIR=0, FIN=1, SEQ=2) [150 bytes data]
+   
+   Outstation reassembly:
+      - Receives 0x40: Start buffer, expect SEQ=1 next
+      - Receives 0x01: Correct sequence, append, expect SEQ=2
+      - Receives 0x82: Correct sequence, deliver 646 bytes to app layer
+
+Example 3: Sequence Wrap-Around
+   Starting SEQ=62, message needs 4 fragments:
+      0x7E (FIR=1, FIN=0, SEQ=62)
+      0x3F (FIR=0, FIN=0, SEQ=63)
+      0x00 (FIR=0, FIN=0, SEQ=0)  ← Wrapped
+      0x81 (FIR=0, FIN=1, SEQ=1)
+
+Example 4: Sequence Error
+   Expected sequence:
+      0x45 (FIR=1, FIN=0, SEQ=5)
+      0x06 (FIR=0, FIN=0, SEQ=6) ← Expected
+   
+   Actual received:
+      0x45 (FIR=1, FIN=0, SEQ=5)
+      0x08 (FIR=0, FIN=0, SEQ=8) ← Gap! SEQ=6,7 missing
+   
+   Action: Discard entire message, wait for new FIR
+
+Example 5: Interrupted Message
+   Receiving:
+      0x40 (FIR=1, FIN=0, SEQ=0) - Buffered
+      0x01 (FIR=0, FIN=0, SEQ=1) - Buffered
+      0xC0 (FIR=1, FIN=1, SEQ=0) - New message!
+   
+   Action: Discard buffered fragments, process new single fragment
+
+
+================================================================================
+ERROR CONDITIONS AND HANDLING
+================================================================================
+
+Error 1: Sequence Gap
+   Condition: Received SEQ ≠ expected SEQ
+   
+   Example:
+      Expected: SEQ=10
+      Received: SEQ=12 (fragments 10,11 missing)
+   
+   Cause:
+      - Data link layer delivery failure
+      - Lost fragments
+      - Transmission error
+   
+   Action:
+      - Discard all buffered fragments of current message
+      - Set receiving_message = FALSE
+      - Wait for new FIR to start fresh message
+      - Do NOT attempt recovery
+   
+   Note:
+      - Transport layer does NOT request retransmission
+      - Application layer may retry entire request
+
+
+Error 2: Duplicate Sequence
+   Condition: Received same SEQ twice
+   
+   Example:
+      Received: SEQ=5
+      Received: SEQ=5 again
+   
+   Cause:
+      - Data link layer retransmission
+      - Delivery of duplicate from link layer
+   
+   Action:
+      - Should not occur if data link layer working correctly
+      - If occurs: Treat as sequence error
+      - Discard message and wait for FIR
+
+
+Error 3: Out-of-Order Fragments
+   Condition: Received SEQ lower than expected
+   
+   Example:
+      Expected: SEQ=8
+      Received: SEQ=6
+   
+   Action:
+      - Treat as sequence error
+      - Discard message and reset
+
+
+Error 4: Continuation Without FIR
+   Condition: Receive FIR=0 fragment when not assembling message
+   
+   Example:
+      State: Not receiving message
+      Receive: 0x05 (FIR=0, FIN=0, SEQ=5)
+   
+   Cause:
+      - Missed FIR fragment
+      - System startup
+      - Previous message discarded
+   
+   Action:
+      - Discard fragment silently
+      - Wait for FIR=1 fragment
+
+
+Error 5: Reassembly Timeout
+   Condition: Incomplete message, no fragments for timeout period
+   
+   Example:
+      Received fragments 1, 2, 3 of 5
+      No fragment 4 or 5 arrives within timeout (typically 60-120 sec)
+   
+   Cause:
+      - Communication failure
+      - Sender crashed
+      - Link layer failure
+   
+   Action:
+      - Discard buffered fragments
+      - Set receiving_message = FALSE
+      - Free buffer memory
+      - Log timeout error
+
+
+Error 6: Buffer Overflow
+   Condition: Received data exceeds available buffer
+   
+   Cause:
+      - Sender transmitting oversized message
+      - Buffer allocation too small
+      - Memory constraints
+   
+   Action:
+      - Implementation specific
+      - May discard message
+      - May process partial message
+      - Should log error
+
+
+================================================================================
+TIMING AND PERFORMANCE
+================================================================================
+
+Reassembly Timer:
+   Typical Value: 60-120 seconds
+   Purpose: Detect incomplete/abandoned transmissions
+   Starts: When FIR fragment received
+   Resets: Each time valid continuation received
+   Expires: Discard incomplete message
+
+Fragment Transmission Rate:
+   - Limited by data link layer timing
+   - Data link ACK timeout: 1-5 seconds
+   - Typical: 1-10 fragments per second
+   - Depends on serial baud rate
+
+Buffer Requirements:
+   Minimum: 2048 bytes (recommended)
+   Maximum message size: 2048 bytes (DNP3 typical limit)
+   Multiple buffers: If supporting concurrent messages
+
+Memory Management:
+   - Allocate buffer on first fragment (FIR=1)
+   - Release on complete (FIN=1) or error
+   - Prevent memory leaks from incomplete messages
+
+
+================================================================================
+TRANSPORT LAYER STATE MACHINE
+================================================================================
+
+States:
+   IDLE: Not assembling message
+   ASSEMBLING: Receiving multi-fragment message
+
+IDLE State:
+   Waiting for: FIR=1 fragment
+   
+   On receive FIR=1, FIN=1:
+      → Deliver to application
+      → Stay in IDLE
+   
+   On receive FIR=1, FIN=0:
+      → Allocate buffer
+      → Store data
+      → Start timer
+      → Transition to ASSEMBLING
+   
+   On receive FIR=0:
+      → Discard (error)
+      → Stay in IDLE
+
+ASSEMBLING State:
+   Waiting for: FIR=0 fragments in sequence
+   
+   On receive FIR=1 (any FIN):
+      → Discard current buffer
+      → Process new message
+      → IDLE or ASSEMBLING (depending on FIN)
+   
+   On receive FIR=0, FIN=0, correct SEQ:
+      → Append to buffer
+      → Update expected SEQ
+      → Reset timer
+      → Stay in ASSEMBLING
+   
+   On receive FIR=0, FIN=1, correct SEQ:
+      → Append to buffer
+      → Deliver complete message
+      → Free buffer
+      → Stop timer
+      → Transition to IDLE
+   
+   On receive wrong SEQ:
+      → Discard buffer
+      → Stop timer
+      → Transition to IDLE
+   
+   On timer expiration:
+      → Discard buffer
+      → Transition to IDLE
+
+
+================================================================================
+IMPLEMENTATION CONSIDERATIONS
+================================================================================
+
+Sender Implementation:
+
+1. Sequence Initialization
+   - Can start at 0 or random value
+   - Maintain per-destination counter
+   - Persistent or reset per session
+
+2. Fragment Size Optimization
+   - Always use full 248 bytes except last fragment
+   - Reduces number of fragments
+   - Improves efficiency
+
+3. Transmission Strategy
+   - Send fragments sequentially
+   - Don't interleave different messages
+   - Consider data link ACK delays
+
+4. Error Recovery
+   - Transport doesn't retry
+   - Application layer detects failure via timeout
+   - Application layer retries entire message
+
+
+Receiver Implementation:
+
+1. Buffer Management
+   - Dynamic allocation preferred
+   - Fixed buffers acceptable if sized properly
+   - Minimum 2048 bytes recommended
+
+2. Timer Management
+   - Start on FIR
+   - Reset on each valid fragment
+   - Typical timeout: 60-120 seconds
+
+3. Validation
+   - Check sequence on every fragment
+   - Strict ordering enforcement
+   - Immediate discard on error
+
+4. Multi-Source Support
+   - Separate state per source
+   - Independent buffers
+   - Isolated error handling
+
+5. Diagnostics
+   - Log sequence errors
+   - Track timeout events
+   - Monitor fragment statistics
+
+
+================================================================================
+QUICK REFERENCE
+================================================================================
+
+Transport Header Values:
+   0xC0-0xFF: Single fragment (FIR=1, FIN=1)
+   0x40-0x7F: First of multiple (FIR=1, FIN=0)
+   0x00-0x3F: Middle fragment (FIR=0, FIN=0)
+   0x80-0xBF: Final fragment (FIR=0, FIN=1)
+
+Common Values:
+   0xC0: Single fragment, SEQ=0 (most common)
+   0xC1: Single fragment, SEQ=1
+   0x40: First fragment, SEQ=0
+   0x41: First fragment, SEQ=1
+   0x00: Middle fragment, SEQ=0
+   0x80: Last fragment, SEQ=0
+
+Maximum Sizes:
+   Fragment data: 248 bytes
+   Total message: 2048 bytes (typical DNP3 limit)
+   Fragments per message: ~9 for max size message
+
+Key Rules:
+   1. FIR=1 always starts new message
+   2. Sequence must be consecutive
+   3. Sequence wraps at 63→0
+   4. No transport layer acknowledgment
+   5. Error = discard and wait for new FIR
+
+================================================================================

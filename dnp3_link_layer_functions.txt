@@ -1,0 +1,411 @@
+================================================================================
+DNP3 DATA LINK LAYER - CONTROL BYTE FUNCTIONS
+================================================================================
+
+CONTROL BYTE FORMAT:
+    Bit 7: DIR  (Direction)
+    Bit 6: PRM  (Primary)
+    Bit 5: FCB  (Frame Count Bit)
+    Bit 4: FCV  (Frame Count Valid)
+    Bit 3-0: Function Code
+
+================================================================================
+MASTER STATION FUNCTIONS (PRM=1, DIR=0)
+================================================================================
+
+1. RESET LINK (Function Code: 0)
+   Control Byte: 0xC0 (11000000)
+   
+   Purpose:
+   - Initializes or reinitializes the data link layer
+   - Clears buffers and resets FCB to 0
+   - Used at startup or after communication errors
+   
+   Characteristics:
+   - FCV = 0 (FCB not valid)
+   - FCB = 0 (ignored)
+   - Requires ACK response from outstation
+   
+   Outstation Response:
+   - ACK (0x80) if successful
+   - NACK (0x81) if unable to reset
+   
+   Usage:
+   - First message after power-up
+   - Recovery from link layer errors
+   - Reestablishing communication
+
+
+2. RESET USER PROCESS (Function Code: 1)
+   Control Byte: 0xC1 (11000001)
+   
+   Purpose:
+   - Resets application layer processing
+   - Clears event buffers and unsolicited message queues
+   - Does NOT reset data link layer state
+   
+   Characteristics:
+   - FCV = 0
+   - FCB = 0
+   - Requires ACK response
+   
+   Outstation Response:
+   - ACK (0x80) when user process reset complete
+   
+   Usage:
+   - Application restart without link reset
+   - Clearing event buffers
+   - Synchronizing application state
+
+
+3. TEST LINK STATES (Function Code: 2)
+   Control Byte: 0xC2 (11000010)
+   
+   Purpose:
+   - Verifies link layer is operational
+   - Tests communication path
+   - No data transfer
+   
+   Characteristics:
+   - FCV = 0
+   - FCB = 0
+   - No user data included
+   
+   Outstation Response:
+   - ACK (0x80) if link operational
+   - No response if link down
+   
+   Usage:
+   - Periodic link health checks
+   - Verifying outstation presence
+   - Communication diagnostics
+
+
+4. CONFIRMED USER DATA (Function Code: 3)
+   Control Byte: 0x53 or 0x73 (01x10011)
+   
+   Purpose:
+   - Sends user data (Transport/Application layer)
+   - Requires acknowledgment
+   - Provides reliable delivery
+   
+   Characteristics:
+   - FCV = 1 (FCB is valid)
+   - FCB = toggles (0→1→0) for each NEW message
+   - FCB stays same for retransmissions
+   
+   Control Byte Values:
+   - 0x53 (01010011): FCB = 0
+   - 0x73 (01110011): FCB = 1
+   
+   Outstation Response:
+   - ACK (0x80) if received correctly
+   - NACK (0x81) if busy or error
+   
+   FCB Toggle Logic:
+   - First message: FCB = 0 (0x53)
+   - Second message: FCB = 1 (0x73)
+   - Third message: FCB = 0 (0x53)
+   - Retransmission: Same FCB as original
+   
+   Usage:
+   - Critical commands (SELECT/OPERATE)
+   - Configuration changes
+   - Any transaction requiring confirmation
+
+
+5. UNCONFIRMED USER DATA (Function Code: 4)
+   Control Byte: 0x44 (01000100)
+   
+   Purpose:
+   - Sends user data without requiring ACK
+   - Faster but no delivery guarantee
+   
+   Characteristics:
+   - FCV = 0 (FCB ignored)
+   - FCB = 0
+   - No response expected
+   
+   Outstation Response:
+   - None (unconfirmed)
+   
+   Usage:
+   - Non-critical reads
+   - Polling for data
+   - High-frequency requests where occasional loss acceptable
+
+
+6. REQUEST LINK STATUS (Function Code: 9)
+   Control Byte: 0xC9 (11001001)
+   
+   Purpose:
+   - Queries outstation link layer status
+   - Different from TEST LINK (provides status info)
+   
+   Characteristics:
+   - FCV = 0
+   - FCB = 0
+   
+   Outstation Response:
+   - LINK STATUS (0x8B) if operational
+   - Includes status information
+   
+   Usage:
+   - Detailed link diagnostics
+   - Status verification
+
+
+================================================================================
+OUTSTATION FUNCTIONS (PRM=0, DIR=1)
+================================================================================
+
+1. ACK - Acknowledge (Function Code: 0)
+   Control Byte: 0x80 (10000000)
+   
+   Purpose:
+   - Positive acknowledgment of received frame
+   - Confirms successful reception and processing
+   
+   Sent In Response To:
+   - RESET LINK
+   - RESET USER PROCESS
+   - TEST LINK STATES
+   - CONFIRMED USER DATA (if valid)
+   
+   Characteristics:
+   - No user data
+   - Confirms FCB was correct (if FCV=1)
+   
+   Meaning:
+   - Frame received correctly
+   - CRC valid
+   - FCB matched expected value
+   - Processing successful
+
+
+2. NACK - Negative Acknowledge (Function Code: 1)
+   Control Byte: 0x81 (10000001)
+   
+   Purpose:
+   - Indicates unable to process request
+   - Signals temporary unavailability
+   
+   Reasons For NACK:
+   - Busy processing previous request
+   - Buffers full
+   - Resource unavailable
+   - FCB sequence error
+   
+   Sent In Response To:
+   - CONFIRMED USER DATA (when cannot process)
+   - RESET LINK (if unable to reset)
+   
+   Master Action:
+   - Retry after delay
+   - Do NOT toggle FCB on retry
+   
+   Note:
+   - Different from no response (link failure)
+   - Different from application layer errors
+
+
+3. LINK STATUS (Function Code: 11)
+   Control Byte: 0x8B (10001011)
+   
+   Purpose:
+   - Reports data link layer status
+   - Responds to REQUEST LINK STATUS
+   
+   Sent In Response To:
+   - REQUEST LINK STATUS (0xC9)
+   
+   Information Provided:
+   - Link operational status
+   - May include additional status bits
+   
+   Usage:
+   - Diagnostics
+   - Health monitoring
+
+
+4. LINK NOT FUNCTIONING (Function Code: 14)
+   Control Byte: 0x8E (10001110)
+   
+   Purpose:
+   - Indicates data link layer error state
+   - Link exists but not operational
+   
+   Conditions:
+   - Internal link layer fault
+   - Configuration error
+   - Resource failure
+   
+   Master Action:
+   - May attempt RESET LINK
+   - Alert operator/logging
+
+
+5. LINK NOT USED (Function Code: 15)
+   Control Byte: 0x8F (10001111)
+   
+   Purpose:
+   - Indicates destination address not configured
+   - Address not assigned to any device
+   
+   Sent In Response To:
+   - Any frame to unconfigured address
+   
+   Master Action:
+   - Check addressing configuration
+   - Verify outstation setup
+
+
+6. UNCONFIRMED USER DATA (Function Code: 4)
+   Control Byte: 0x84 (10000100)
+   
+   Purpose:
+   - Sends unsolicited messages to master
+   - Events, alarms, spontaneous data
+   
+   Characteristics:
+   - PRM = 0 (secondary initiating)
+   - DIR = 1 (to master)
+   - No ACK required
+   
+   Usage:
+   - Unsolicited responses (Class 1/2/3 events)
+   - Time-critical alarms
+   - Change-of-state notifications
+   
+   Note:
+   - Must be enabled via Enable Unsolicited command
+   - Uses same function code as master's unconfirmed
+
+
+================================================================================
+FCB/FCV DUPLICATE DETECTION MECHANISM
+================================================================================
+
+Purpose:
+- Prevents duplicate processing of retransmitted frames
+- Master maintains separate FCB state for each outstation
+
+Master FCB Logic:
+1. New message → Toggle FCB (0→1 or 1→0)
+2. Retransmission → Keep same FCB
+3. Set FCV=1 for confirmed data
+
+Outstation FCB Logic:
+1. Receives frame with FCV=1
+2. Compares FCB with last accepted FCB
+3. If FCB same as previous → Duplicate (send ACK, don't process)
+4. If FCB different → New message (process and send ACK)
+5. Update stored FCB after successful processing
+
+Example Sequence:
+   Master sends: FCB=0, FCV=1 → Outstation: Process, ACK, store FCB=0
+   Master sends: FCB=1, FCV=1 → Outstation: Process, ACK, store FCB=1
+   Master sends: FCB=1, FCV=1 → Outstation: Duplicate! ACK, don't reprocess
+   Master sends: FCB=0, FCV=1 → Outstation: New message, Process, ACK
+
+FCB Error Conditions:
+- Out of sequence FCB → NACK
+- After RESET LINK → FCB resets to 0
+
+
+================================================================================
+TYPICAL MESSAGE SEQUENCES
+================================================================================
+
+SEQUENCE 1: Initial Link Establishment
+   Master → Outstation: RESET LINK (0xC0)
+   Outstation → Master: ACK (0x80)
+   [Link ready, FCB initialized to 0]
+
+
+SEQUENCE 2: Confirmed Data Transfer
+   Master → Outstation: USER DATA CONF, FCB=0 (0x53) [READ request]
+   Outstation → Master: ACK (0x80)
+   Outstation → Master: USER DATA UNCONF (0x84) [Response with data]
+
+
+SEQUENCE 3: Retry After NACK
+   Master → Outstation: USER DATA CONF, FCB=0 (0x53)
+   Outstation → Master: NACK (0x81) [Busy]
+   [Delay]
+   Master → Outstation: USER DATA CONF, FCB=0 (0x53) [Same FCB!]
+   Outstation → Master: ACK (0x80)
+
+
+SEQUENCE 4: Retry After Timeout
+   Master → Outstation: USER DATA CONF, FCB=0 (0x53)
+   [No response - timeout]
+   Master → Outstation: USER DATA CONF, FCB=0 (0x53) [Same FCB!]
+   Outstation → Master: ACK (0x80)
+
+
+SEQUENCE 5: Link Health Check
+   Master → Outstation: TEST LINK STATES (0xC2)
+   Outstation → Master: ACK (0x80)
+   [Link confirmed operational]
+
+
+SEQUENCE 6: Unsolicited Response
+   [Event occurs at outstation]
+   Outstation → Master: USER DATA UNCONF (0x84) [Unsolicited message]
+   [No ACK expected or sent]
+
+
+================================================================================
+CONTROL BYTE QUICK REFERENCE
+================================================================================
+
+MASTER TO OUTSTATION (PRM=1, DIR=0):
+   0xC0 - RESET LINK
+   0xC1 - RESET USER PROCESS
+   0xC2 - TEST LINK STATES
+   0x53 - USER DATA CONF (FCB=0)
+   0x73 - USER DATA CONF (FCB=1)
+   0x44 - USER DATA UNCONF
+   0xC9 - REQUEST LINK STATUS
+
+OUTSTATION TO MASTER (PRM=0, DIR=1):
+   0x80 - ACK
+   0x81 - NACK
+   0x84 - USER DATA UNCONF (unsolicited)
+   0x8B - LINK STATUS
+   0x8E - LINK NOT FUNCTIONING
+   0x8F - LINK NOT USED
+
+
+================================================================================
+IMPLEMENTATION NOTES
+================================================================================
+
+Master Responsibilities:
+- Maintain FCB state for each outstation
+- Handle timeouts and retries
+- Toggle FCB only for new messages
+- Implement retry limits
+- Handle NACK backoff
+
+Outstation Responsibilities:
+- Store last valid FCB per master
+- Detect and reject duplicates
+- Send ACK for valid duplicates
+- Respond within link layer timeout
+- Support unsolicited if configured
+
+Timing Considerations:
+- Link layer timeout: typically 1-5 seconds
+- Retry intervals: typically 100-500ms
+- Number of retries: typically 1-3
+- Unsolicited retry: configurable
+
+Error Handling:
+- CRC errors → Discard frame silently
+- Timeout → Retry with same FCB
+- NACK → Retry after delay with same FCB
+- Multiple failures → Reset link or alert operator
+
+================================================================================
