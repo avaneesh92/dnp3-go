@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -35,7 +34,7 @@ type outstation struct {
 
 	// State
 	enabled           bool
-	sequence          uint8
+	seqCounter        *app.SequenceCounter
 	unsolicitedMask   app.ClassField // Classes enabled for unsolicited responses
 	stateMu           sync.RWMutex
 
@@ -86,7 +85,7 @@ func New(config OutstationConfig, callbacks OutstationCallbacks, ch *channel.Cha
 		database:        database,
 		eventBuffer:     eventBuffer,
 		enabled:         false,
-		sequence:        0,
+		seqCounter:      app.NewSequenceCounter(),
 		unsolicitedMask: app.ClassAll, // Start with all classes enabled
 		ctx:             ctx,
 		cancel:          cancel,
@@ -263,13 +262,9 @@ func (o *outstation) isEnabled() bool {
 	return o.enabled
 }
 
-// getNextSequence returns the next sequence number
+// getNextSequence returns the next sequence number using app layer helper
 func (o *outstation) getNextSequence() uint8 {
-	o.stateMu.Lock()
-	defer o.stateMu.Unlock()
-	seq := o.sequence
-	o.sequence = (o.sequence + 1) & 0x0F
-	return seq
+	return o.seqCounter.Next()
 }
 
 // Session returns the session (for channel registration)
@@ -292,7 +287,7 @@ func (s *session) OnReceive(frame *link.Frame) error {
 	// Handle link layer control frames
 	if frame.IsPrimary == link.PrimaryFrame {
 		switch frame.FunctionCode {
-		case link.FuncResetLinkStates:
+		case link.FuncResetLink:
 			// Respond with ACK for Reset Link States
 			s.outstation.logger.Debug("Outstation session %d: Received Reset Link States, sending ACK", s.linkAddress)
 			return s.sendLinkAck()
@@ -719,7 +714,7 @@ func (o *outstation) buildEventData(class uint8) []byte {
 	return []byte{}
 }
 
-// buildBinaryInputResponse builds binary input response
+// buildBinaryInputResponse builds binary input response using app layer helpers
 func (o *outstation) buildBinaryInputResponse(header *app.ObjectHeader) []byte {
 	o.database.mu.RLock()
 	defer o.database.mu.RUnlock()
@@ -736,36 +731,30 @@ func (o *outstation) buildBinaryInputResponse(header *app.ObjectHeader) []byte {
 		variation = o.database.binary[0].staticVariation
 	}
 
-	var data []byte
+	// Use app layer builder
+	builder := app.NewObjectBuilder()
 
-	// Object header: Group 1, Variation, Qualifier, Range
-	data = append(data, app.GroupBinaryInput)
-	data = append(data, variation)
-	data = append(data, uint8(app.Qualifier8BitStartStop))
-	data = append(data, 0) // Start index
-	data = append(data, uint8(len(o.database.binary)-1)) // Stop index
+	// Add object header
+	builder.AddHeader(
+		app.GroupBinaryInput,
+		variation,
+		app.Qualifier8BitStartStop,
+		app.StartStopRange{Start: 0, Stop: uint32(len(o.database.binary) - 1)},
+	)
 
-	// Write values based on variation
+	// Serialize values using app layer helper
 	for _, point := range o.database.binary {
-		switch variation {
-		case app.BinaryInputWithFlags:
-			// Variation 2: Binary with flags (1 byte)
-			flags := point.value.Flags
-			if point.value.Value {
-				flags |= 0x80 // Set bit 7 for binary state
-			}
-			data = append(data, byte(flags))
-		case app.BinaryInputPacked:
-			// Variation 1: Packed format (1 bit per input)
-			// TODO: Implement packed format
-			data = append(data, byte(point.value.Flags))
+		bi := app.BinaryInput{
+			Value: point.value.Value,
+			Flags: uint8(point.value.Flags),
 		}
+		builder.AddRawData(bi.Serialize())
 	}
 
-	return data
+	return builder.Build()
 }
 
-// buildAnalogInputResponse builds analog input response
+// buildAnalogInputResponse builds analog input response using app layer helpers
 func (o *outstation) buildAnalogInputResponse(header *app.ObjectHeader) []byte {
 	o.database.mu.RLock()
 	defer o.database.mu.RUnlock()
@@ -782,41 +771,44 @@ func (o *outstation) buildAnalogInputResponse(header *app.ObjectHeader) []byte {
 		variation = o.database.analog[0].staticVariation
 	}
 
-	var data []byte
+	// Use app layer builder
+	builder := app.NewObjectBuilder()
 
-	// Object header
-	data = append(data, app.GroupAnalogInput)
-	data = append(data, variation)
-	data = append(data, uint8(app.Qualifier8BitStartStop))
-	data = append(data, 0) // Start index
-	data = append(data, uint8(len(o.database.analog)-1)) // Stop index
+	// Add object header
+	builder.AddHeader(
+		app.GroupAnalogInput,
+		variation,
+		app.Qualifier8BitStartStop,
+		app.StartStopRange{Start: 0, Stop: uint32(len(o.database.analog) - 1)},
+	)
 
-	// Write values based on variation
+	// Serialize values using app layer helper
 	for _, point := range o.database.analog {
+		ai := app.AnalogInput{
+			Value: point.value.Value,
+			Flags: uint8(point.value.Flags),
+		}
+
+		var serialized []byte
 		switch variation {
 		case app.AnalogInputFloat:
-			// Variation 5: 32-bit float + flags (5 bytes)
-			value := math.Float32bits(float32(point.value.Value))
-			data = append(data, byte(value))
-			data = append(data, byte(value>>8))
-			data = append(data, byte(value>>16))
-			data = append(data, byte(value>>24))
-			data = append(data, byte(point.value.Flags))
+			serialized = ai.SerializeFloat()
 		case app.AnalogInput32Bit:
-			// Variation 1: 32-bit integer + flags (5 bytes)
-			value := int32(point.value.Value)
-			data = append(data, byte(value))
-			data = append(data, byte(value>>8))
-			data = append(data, byte(value>>16))
-			data = append(data, byte(value>>24))
-			data = append(data, byte(point.value.Flags))
+			serialized = ai.Serialize32Bit()
+		case app.AnalogInput16Bit:
+			serialized = ai.Serialize16Bit()
+		case app.AnalogInputDouble:
+			serialized = ai.SerializeDouble()
+		default:
+			serialized = ai.SerializeFloat()
 		}
+		builder.AddRawData(serialized)
 	}
 
-	return data
+	return builder.Build()
 }
 
-// buildCounterResponse builds counter response
+// buildCounterResponse builds counter response using app layer helpers
 func (o *outstation) buildCounterResponse(header *app.ObjectHeader) []byte {
 	o.database.mu.RLock()
 	defer o.database.mu.RUnlock()
@@ -833,35 +825,35 @@ func (o *outstation) buildCounterResponse(header *app.ObjectHeader) []byte {
 		variation = o.database.counter[0].staticVariation
 	}
 
-	var data []byte
+	// Use app layer builder
+	builder := app.NewObjectBuilder()
 
-	// Object header
-	data = append(data, app.GroupCounter)
-	data = append(data, variation)
-	data = append(data, uint8(app.Qualifier8BitStartStop))
-	data = append(data, 0) // Start index
-	data = append(data, uint8(len(o.database.counter)-1)) // Stop index
+	// Add object header
+	builder.AddHeader(
+		app.GroupCounter,
+		variation,
+		app.Qualifier8BitStartStop,
+		app.StartStopRange{Start: 0, Stop: uint32(len(o.database.counter) - 1)},
+	)
 
-	// Write values
+	// Serialize values using app layer helper
 	for _, point := range o.database.counter {
-		switch variation {
-		case app.Counter32BitWithFlag:
-			// Variation 5: 32-bit counter + flags (5 bytes)
-			value := point.value.Value
-			data = append(data, byte(value))
-			data = append(data, byte(value>>8))
-			data = append(data, byte(value>>16))
-			data = append(data, byte(value>>24))
-			data = append(data, byte(point.value.Flags))
-		case app.Counter32Bit:
-			// Variation 1: 32-bit counter only (4 bytes)
-			value := point.value.Value
-			data = append(data, byte(value))
-			data = append(data, byte(value>>8))
-			data = append(data, byte(value>>16))
-			data = append(data, byte(value>>24))
+		counter := app.Counter{
+			Value: point.value.Value,
+			Flags: uint8(point.value.Flags),
 		}
+
+		var serialized []byte
+		switch variation {
+		case app.Counter32BitWithFlag, app.Counter32Bit:
+			serialized = counter.Serialize32Bit()
+		case app.Counter16BitWithFlag, app.Counter16Bit:
+			serialized = counter.Serialize16Bit()
+		default:
+			serialized = counter.Serialize32Bit()
+		}
+		builder.AddRawData(serialized)
 	}
 
-	return data
+	return builder.Build()
 }

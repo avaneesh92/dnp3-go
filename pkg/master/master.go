@@ -39,7 +39,7 @@ type master struct {
 
 	// State
 	enabled      bool
-	sequence     uint8
+	seqCounter   *app.SequenceCounter
 	lastIIN      types.IIN
 	stateMu      sync.RWMutex
 
@@ -69,7 +69,7 @@ func New(config MasterConfig, callbacks MasterCallbacks, ch *channel.Channel, lo
 		scans:       make(map[int]*PeriodicScan),
 		nextScanID:  1,
 		enabled:     false,
-		sequence:    0,
+		seqCounter:  app.NewSequenceCounter(),
 		ctx:         ctx,
 		cancel:      cancel,
 		pendingResp: make(chan *app.APDU, 1),
@@ -221,13 +221,9 @@ func (m *master) isEnabled() bool {
 	return m.enabled
 }
 
-// getNextSequence returns the next sequence number
+// getNextSequence returns the next sequence number using app layer helper
 func (m *master) getNextSequence() uint8 {
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
-	seq := m.sequence
-	m.sequence = (m.sequence + 1) & 0x0F
-	return seq
+	return m.seqCounter.Next()
 }
 
 // onReceiveAPDU handles received APDU

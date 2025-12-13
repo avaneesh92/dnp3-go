@@ -1,0 +1,1204 @@
+================================================================================
+DNP3 APPLICATION LAYER - FUNCTIONS AND BEHAVIOR
+================================================================================
+
+OVERVIEW:
+The Application Layer is the highest layer in DNP3, responsible for:
+- Defining data objects (binary inputs, analog values, counters, etc.)
+- Implementing request/response operations
+- Managing events and unsolicited reporting
+- Controlling devices (binary outputs, analog outputs)
+- Time synchronization
+- File transfer operations
+
+LAYER POSITION:
+[Application Layer] ← Highest
+      ↓
+[Transport Layer] ← Fragments large messages
+      ↓
+[Data Link Layer] ← Frames and error detection
+      ↓
+[Physical Layer] ← Serial communication
+
+================================================================================
+APPLICATION MESSAGE STRUCTURE
+================================================================================
+
+Complete Application Message:
+┌──────────────┬───────────────┬────────────────┬─────────────────────┐
+│ App Control  │ Function Code │   Internal     │   Object Data       │
+│   (1 byte)   │   (1 byte)    │  Indications   │    (variable)       │
+│              │               │  (0 or 2 B)    │                     │
+└──────────────┴───────────────┴────────────────┴─────────────────────┘
+                                      ↑
+                             Only in responses
+
+
+Object Data Structure:
+┌─────────────────────────────────────────────────────┐
+│              Object Header #1                        │
+├──────────┬───────────┬───────────┬──────────────────┤
+│  Group   │ Variation │ Qualifier │   Range/Count    │
+│ (1 byte) │ (1 byte)  │ (1 byte)  │   (variable)     │
+└──────────┴───────────┴───────────┴──────────────────┘
+│              Object Data Points                      │
+│  (format depends on group/variation/qualifier)       │
+└─────────────────────────────────────────────────────┘
+│              Object Header #2 (optional)             │
+│                     ...                              │
+└─────────────────────────────────────────────────────┘
+
+Multiple object headers can exist in single message.
+
+================================================================================
+APPLICATION CONTROL BYTE (1 BYTE)
+================================================================================
+
+Bit Layout:
+    Bit 7      Bit 6      Bit 5      Bit 4      Bits 3-0
+   ┌──────┬──────────┬──────────┬──────────┬──────────────┐
+   │ FIR  │   FIN    │   CON    │   UNS    │   SEQUENCE   │
+   └──────┴──────────┴──────────┴──────────┴──────────────┘
+
+BIT 7 - FIR (First)
+   Purpose: Multi-fragment application message handling
+   
+   FIR = 1:
+   - This is the FIRST application fragment
+   - Receiver should start new message assembly
+   - Can be combined with FIN=1 for single fragment
+   
+   FIR = 0:
+   - Continuation of previous application message
+   - Must follow previous fragment
+   
+   Note: Different from Transport Layer FIR
+   - Application fragmentation is SEPARATE from transport fragmentation
+   - Transport fragments large app fragments
+   - Rarely used in practice (most apps fit in one fragment)
+
+
+BIT 6 - FIN (Final)
+   Purpose: Marks last application fragment
+   
+   FIN = 1:
+   - Last (or only) application fragment
+   - Receiver can process complete message
+   
+   FIN = 0:
+   - More application fragments follow
+   - Wait for FIN=1
+   
+   Typical: FIR=1, FIN=1 (complete message in one fragment)
+
+
+BIT 5 - CON (Confirm Required)
+   Purpose: Requests application layer confirmation
+   
+   CON = 1:
+   - Response requires explicit CONFIRM
+   - Used for unsolicited responses
+   - Ensures critical data acknowledged
+   
+   CON = 0:
+   - No confirmation needed
+   - Normal request/response mode
+   
+   Usage:
+   - Master sets CON=0 in requests
+   - Outstation sets CON=1 in unsolicited responses
+   - Master sends CONFIRM (function code 0) to acknowledge
+
+
+BIT 4 - UNS (Unsolicited)
+   Purpose: Identifies unsolicited responses
+   
+   UNS = 1:
+   - This is an unsolicited response
+   - Not triggered by master request
+   - Event-driven from outstation
+   
+   UNS = 0:
+   - Solicited message
+   - Normal request or response to request
+   
+   Usage:
+   - Only outstation sets UNS=1
+   - Master never sets UNS=1
+   - Identifies event notifications
+
+
+BITS 3-0 - SEQUENCE (0-15)
+   Purpose: Match requests with responses
+   
+   Behavior:
+   - Master increments for each new request (0→1→...→15→0)
+   - Outstation echoes sequence from request in response
+   - Unsolicited responses use independent sequence
+   - Detects duplicate/out-of-order responses
+   
+   Values: 0-15 (4 bits, wraps around)
+   
+   Example:
+      Master sends READ with SEQ=5
+      Outstation responds with SEQ=5
+      Master knows this response matches request #5
+
+
+Common Control Byte Values:
+
+REQUEST (Master → Outstation):
+   0xC0: FIR=1, FIN=1, CON=0, UNS=0, SEQ=0
+   0xC1: FIR=1, FIN=1, CON=0, UNS=0, SEQ=1
+   ...
+   0xCF: FIR=1, FIN=1, CON=0, UNS=0, SEQ=15
+
+RESPONSE (Outstation → Master, solicited):
+   0xC0-0xCF: Echoes request sequence
+
+UNSOLICITED RESPONSE (Outstation → Master):
+   0xD0: FIR=1, FIN=1, CON=1, UNS=1, SEQ=0
+   0xD1: FIR=1, FIN=1, CON=1, UNS=1, SEQ=1
+   ...
+
+CONFIRM (Master → Outstation):
+   0xC0-0xCF: Confirms unsolicited, echoes its sequence
+
+
+================================================================================
+FUNCTION CODES
+================================================================================
+
+Function codes define the operation type.
+
+REQUESTS (Master → Outstation):
+┌──────┬─────────────────────────┬──────────────────────────────────┐
+│ Code │ Name                    │ Description                      │
+├──────┼─────────────────────────┼──────────────────────────────────┤
+│  0   │ CONFIRM                 │ Confirm unsolicited response     │
+│  1   │ READ                    │ Read data objects                │
+│  2   │ WRITE                   │ Write data objects               │
+│  3   │ SELECT                  │ Select before operate (arm)      │
+│  4   │ OPERATE                 │ Operate control (execute)        │
+│  5   │ DIRECT_OPERATE          │ Operate without select           │
+│  6   │ DIRECT_OPERATE_NR       │ Direct operate, no response      │
+│  7   │ IMMED_FREEZE            │ Freeze counters immediately      │
+│  8   │ IMMED_FREEZE_NR         │ Freeze, no response              │
+│  9   │ FREEZE_CLEAR            │ Freeze and clear counters        │
+│ 10   │ FREEZE_CLEAR_NR         │ Freeze/clear, no response        │
+│ 11   │ FREEZE_AT_TIME          │ Freeze at specified time         │
+│ 12   │ FREEZE_AT_TIME_NR       │ Freeze at time, no response      │
+│ 13   │ COLD_RESTART            │ Cold restart device              │
+│ 14   │ WARM_RESTART            │ Warm restart device              │
+│ 15   │ INITIALIZE_DATA         │ Reset data to defaults           │
+│ 16   │ INITIALIZE_APPL         │ Reset application                │
+│ 17   │ START_APPL              │ Start application                │
+│ 18   │ STOP_APPL               │ Stop application                 │
+│ 19   │ SAVE_CONFIG             │ Save configuration               │
+│ 20   │ ENABLE_UNSOLICITED      │ Enable unsolicited responses     │
+│ 21   │ DISABLE_UNSOLICITED     │ Disable unsolicited responses    │
+│ 22   │ ASSIGN_CLASS            │ Assign object to event class     │
+│ 23   │ DELAY_MEASURE           │ Measure communication delay      │
+│ 24   │ RECORD_CURRENT_TIME     │ Record current time              │
+│ 25   │ OPEN_FILE               │ Open file for transfer           │
+│ 26   │ CLOSE_FILE              │ Close file                       │
+│ 27   │ DELETE_FILE             │ Delete file                      │
+│ 28   │ GET_FILE_INFO           │ Get file information             │
+│ 29   │ AUTHENTICATE_FILE       │ Authenticate file                │
+│ 30   │ ABORT_FILE              │ Abort file transfer              │
+└──────┴─────────────────────────┴──────────────────────────────────┘
+
+RESPONSES (Outstation → Master):
+┌──────┬─────────────────────────┬──────────────────────────────────┐
+│ Code │ Name                    │ Description                      │
+├──────┼─────────────────────────┼──────────────────────────────────┤
+│ 129  │ RESPONSE                │ Solicited response               │
+│ 130  │ UNSOLICITED_RESPONSE    │ Unsolicited response (events)    │
+└──────┴─────────────────────────┴──────────────────────────────────┘
+
+
+================================================================================
+INTERNAL INDICATIONS (IIN) - 2 BYTES
+================================================================================
+
+Present ONLY in responses (function codes 129 and 130).
+Provide outstation status and error information.
+
+Format:
+┌────────────────────────────────────────────────────────┐
+│                    IIN Byte 1 (IIN1.x)                 │
+├───┬───┬───┬───┬───┬───┬───┬───────────────────────────┤
+│ 7 │ 6 │ 5 │ 4 │ 3 │ 2 │ 1 │ 0                         │
+└───┴───┴───┴───┴───┴───┴───┴───────────────────────────┘
+ RST TRB LOC TIME C3  C2  C1  BCAST
+
+┌────────────────────────────────────────────────────────┐
+│                    IIN Byte 2 (IIN2.x)                 │
+├───┬───┬───┬───┬───┬───┬───┬───────────────────────────┤
+│ 7 │ 6 │ 5 │ 4 │ 3 │ 2 │ 1 │ 0                         │
+└───┴───┴───┴───┴───┴───┴───┴───────────────────────────┘
+ --- --- COR EBO AEX PER UNK FUN
+
+
+IIN1 - Byte 1 Status Flags:
+
+Bit 0 - BROADCAST (IIN1.0)
+   Set: Outstation processed broadcast message
+   Usage: Confirms broadcast reception
+
+Bit 1 - CLASS_1_EVENTS (IIN1.1)
+   Set: Class 1 events available
+   Usage: Master should poll for Class 1 data
+
+Bit 2 - CLASS_2_EVENTS (IIN1.2)
+   Set: Class 2 events available
+   Usage: Master should poll for Class 2 data
+
+Bit 3 - CLASS_3_EVENTS (IIN1.3)
+   Set: Class 3 events available
+   Usage: Master should poll for Class 3 data
+
+Bit 4 - NEED_TIME (IIN1.4)
+   Set: Outstation needs time synchronization
+   Usage: Master should send time sync
+
+Bit 5 - LOCAL_CONTROL (IIN1.5)
+   Set: Device in local control mode
+   Usage: Remote control may be disabled
+
+Bit 6 - DEVICE_TROUBLE (IIN1.6)
+   Set: Device malfunction or abnormal condition
+   Usage: Investigate device status
+
+Bit 7 - DEVICE_RESTART (IIN1.7)
+   Set: Device has restarted since last communication
+   Usage: May need reinitialization
+
+
+IIN2 - Byte 2 Error Flags:
+
+Bit 0 - FUNC_NOT_SUPPORTED (IIN2.0)
+   Set: Function code not implemented
+   Usage: Master sent unsupported function
+
+Bit 1 - OBJECT_UNKNOWN (IIN2.1)
+   Set: Object group/variation not supported
+   Usage: Requested object doesn't exist
+
+Bit 2 - PARAMETER_ERROR (IIN2.2)
+   Set: Invalid parameters in request
+   Usage: Check request formatting
+
+Bit 3 - EVENT_BUFFER_OVERFLOW (IIN2.3)
+   Set: Event buffer overflowed, events lost
+   Usage: Increase polling frequency
+
+Bit 4 - ALREADY_EXECUTING (IIN2.4)
+   Set: Busy processing previous request
+   Usage: Retry later
+
+Bit 5 - CONFIG_CORRUPT (IIN2.5)
+   Set: Device configuration corrupted
+   Usage: Reconfigure device
+
+Bit 6 - Reserved (IIN2.6)
+   Always 0
+
+Bit 7 - Reserved (IIN2.7)
+   Always 0
+
+
+IIN Usage Examples:
+
+Normal Response:
+   IIN = 0x00 0x00 (no flags set)
+   Meaning: All OK, no events, no errors
+
+Events Available:
+   IIN = 0x02 0x00 (IIN1.1 set)
+   Meaning: Class 1 events waiting
+
+Need Time Sync:
+   IIN = 0x10 0x00 (IIN1.4 set)
+   Meaning: Outstation clock needs update
+
+Function Not Supported:
+   IIN = 0x00 0x01 (IIN2.0 set)
+   Meaning: Requested function not implemented
+
+Buffer Overflow:
+   IIN = 0x00 0x08 (IIN2.3 set)
+   Meaning: Events lost, poll more frequently
+
+
+================================================================================
+DATA OBJECTS
+================================================================================
+
+Objects are identified by GROUP and VARIATION numbers.
+
+Object Identifier Format:
+   Group.Variation
+   Example: 1.2 = Binary Input with Flags
+
+STATIC vs EVENT Objects:
+   - STATIC: Current state/value
+   - EVENT: Change notification with timestamp
+
+
+Common Object Groups:
+
+GROUP 1 - Binary Input (Static)
+   Var 0: Any variation
+   Var 1: Packed format
+   Var 2: With flags
+
+GROUP 2 - Binary Input Change Event
+   Var 0: Any variation
+   Var 1: Without time
+   Var 2: With absolute time
+   Var 3: With relative time
+
+GROUP 10 - Binary Output Status (Static)
+   Var 0: Any variation
+   Var 1: Packed format
+   Var 2: With flags
+
+GROUP 12 - Control Relay Output Block (CROB)
+   Var 1: CROB (control commands)
+
+GROUP 20 - Binary Counter (Static)
+   Var 0: Any variation
+   Var 1: 32-bit with flag
+   Var 2: 16-bit with flag
+   Var 5: 32-bit without flag
+   Var 6: 16-bit without flag
+
+GROUP 22 - Binary Counter Event
+   Var 0: Any variation
+   Var 1: 32-bit with flag
+   Var 2: 16-bit with flag
+   Var 5: 32-bit with flag and time
+   Var 6: 16-bit with flag and time
+
+GROUP 30 - Analog Input (Static)
+   Var 0: Any variation
+   Var 1: 32-bit with flag
+   Var 2: 16-bit with flag
+   Var 3: 32-bit without flag
+   Var 4: 16-bit without flag
+   Var 5: Single precision float with flag
+   Var 6: Double precision float with flag
+
+GROUP 32 - Analog Input Event
+   Var 0: Any variation
+   Var 1: 32-bit with flag, without time
+   Var 2: 16-bit with flag, without time
+   Var 3: 32-bit with flag and time
+   Var 4: 16-bit with flag and time
+   Var 5: Single float with flag and time
+   Var 6: Double float with flag and time
+   Var 7: Single float with flag, no time
+   Var 8: Double float with flag, no time
+
+GROUP 40 - Analog Output Status (Static)
+   Var 0: Any variation
+   Var 1: 32-bit with flag
+   Var 2: 16-bit with flag
+   Var 3: Single float with flag
+   Var 4: Double float with flag
+
+GROUP 41 - Analog Output Block (Command)
+   Var 1: 32-bit
+   Var 2: 16-bit
+   Var 3: Single precision float
+   Var 4: Double precision float
+
+GROUP 50 - Time and Date
+   Var 1: Absolute time (DNP3 time)
+   Var 3: Last recorded time
+
+GROUP 51 - Time and Date CTO (Common Time of Occurrence)
+   Var 1: Absolute time (synchronized)
+   Var 2: Absolute time (unsynchronized)
+
+GROUP 52 - Time Delay
+   Var 1: Coarse (ms)
+   Var 2: Fine (μs)
+
+GROUP 60 - Class Data
+   Var 1: Class 0 (all static data)
+   Var 2: Class 1 (high priority events)
+   Var 3: Class 2 (normal priority events)
+   Var 4: Class 3 (low priority events)
+
+GROUP 80 - Internal Indications
+   Var 1: Packed format (IIN status)
+
+
+Object Header Format:
+┌──────────┬───────────┬───────────┬────────────────┐
+│  Group   │ Variation │ Qualifier │  Range/Index   │
+│ (1 byte) │ (1 byte)  │ (1 byte)  │   (variable)   │
+└──────────┴───────────┴───────────┴────────────────┘
+
+
+Qualifier Codes (common ones):
+
+0x00: 8-bit start/stop indices
+0x01: 16-bit start/stop indices
+0x06: No range field (qualifier only)
+0x07: 8-bit limited quantity
+0x08: 16-bit limited quantity
+0x17: 8-bit index (list of indices)
+0x28: 16-bit index (list of indices)
+
+
+================================================================================
+MASTER STATION APPLICATION LAYER BEHAVIOR
+================================================================================
+
+PRIMARY FUNCTIONS:
+
+1. POLLING FOR DATA
+   
+   Purpose: Retrieve current values and events
+   
+   Integrity Poll (Class 0):
+      - Requests all static data
+      - Periodic (e.g., every 60 seconds)
+      - Establishes baseline state
+      
+      Message:
+         Control: 0xC0-0xCF (increment SEQ)
+         Function: READ (1)
+         Object: Group 60, Var 1
+         Qualifier: 0x06 (no range)
+      
+      Response contains:
+         - All binary inputs
+         - All analog inputs
+         - All counters
+         - All output statuses
+   
+   Event Poll (Class 1/2/3):
+      - Requests event data
+      - Frequent (e.g., every 1-5 seconds)
+      - Gets changes since last poll
+      
+      Message:
+         Control: 0xC0-0xCF
+         Function: READ (1)
+         Objects: 
+            Group 60, Var 2 (Class 1)
+            Group 60, Var 3 (Class 2)
+            Group 60, Var 4 (Class 3)
+      
+      Response contains:
+         - Binary input events with timestamps
+         - Analog input events with timestamps
+         - Counter events
+         - Only changed data
+
+
+2. CONTROL OPERATIONS
+   
+   SELECT/OPERATE Sequence (Safer):
+      
+      Step 1 - SELECT:
+         Control: 0xC0 (SEQ=0, example)
+         Function: SELECT (3)
+         Object: Group 12, Var 1 (CROB)
+         Data: Control parameters (point index, control code, etc.)
+      
+      Outstation Response:
+         Function: RESPONSE (129)
+         Status: SUCCESS or error code
+         Echoes control object
+      
+      Step 2 - OPERATE (if SELECT succeeded):
+         Control: 0xC1 (SEQ=1, incremented)
+         Function: OPERATE (4)
+         Object: IDENTICAL to SELECT
+      
+      Outstation Response:
+         Function: RESPONSE (129)
+         Status: SUCCESS or error code
+      
+      Rules:
+         - OPERATE must exactly match SELECT
+         - OPERATE must follow within timeout (typically 2-10 sec)
+         - SELECT arms, OPERATE executes
+   
+   Direct Operate (Less Safe):
+      Control: 0xC0
+      Function: DIRECT_OPERATE (5)
+      Object: Group 12, Var 1 (CROB)
+      
+      - Single step operation
+      - No SELECT required
+      - Used for non-critical controls
+
+
+3. TIME SYNCHRONIZATION
+   
+   LAN Time Sync (most common):
+      Control: 0xC0
+      Function: WRITE (2)
+      Object: Group 50, Var 1
+      Data: Current absolute time
+      
+      Outstation updates its clock.
+   
+   Non-LAN Time Sync (legacy):
+      Uses DELAY_MEASURE and RECORD_CURRENT_TIME
+      More complex, accounts for propagation delay
+
+
+4. ENABLE/DISABLE UNSOLICITED
+   
+   Enable:
+      Control: 0xC0
+      Function: ENABLE_UNSOLICITED (20)
+      Objects: Group 60, Var 2,3,4 (which classes to report)
+   
+   Disable:
+      Control: 0xC0
+      Function: DISABLE_UNSOLICITED (21)
+      Objects: Group 60, Var 2,3,4
+   
+   Outstation will send unsolicited responses when enabled.
+
+
+5. CONFIRM UNSOLICITED RESPONSES
+   
+   When receiving unsolicited:
+      Control: Matches unsolicited SEQ
+      Function: CONFIRM (0)
+      No objects
+   
+   Tells outstation: "I received your event notification"
+
+
+6. DEVICE CONTROL
+   
+   Cold Restart:
+      Function: COLD_RESTART (13)
+      Reboots device completely
+   
+   Warm Restart:
+      Function: WARM_RESTART (14)
+      Restarts without full reboot
+   
+   Response contains restart time delay.
+
+
+SEQUENCE NUMBER MANAGEMENT:
+
+Master maintains sequence counter (0-15):
+   - Increment for each new request
+   - Wrap at 15 back to 0
+   - Match response SEQ to request SEQ
+   - Detect duplicate/stale responses
+
+Example:
+   Request 1: SEQ=0
+   Request 2: SEQ=1
+   ...
+   Request 16: SEQ=0 (wrapped)
+
+
+REQUEST TIMEOUT HANDLING:
+
+If no response within timeout (typically 5-30 seconds):
+   1. Retry same request (same SEQ)
+   2. Retry limit (typically 1-3 retries)
+   3. If all retries fail:
+      - Mark outstation offline
+      - Alert operator
+      - Continue attempting communication
+
+
+RESPONSE VALIDATION:
+
+Check received response:
+   1. Sequence matches request? 
+   2. IIN flags indicate errors?
+   3. Object data valid?
+   4. Within expected time?
+
+If validation fails:
+   - Log error
+   - May retry request
+   - Update communication statistics
+
+
+UNSOLICITED RESPONSE HANDLING:
+
+When unsolicited arrives:
+   1. Verify UNS=1, CON=1
+   2. Extract event data
+   3. Update database
+   4. Send CONFIRM
+   5. Process alarms/notifications
+
+Sequence tracking:
+   - Separate sequence for unsolicited
+   - Detect missing unsolicited messages
+   - Request retransmission if gap detected
+
+
+================================================================================
+OUTSTATION APPLICATION LAYER BEHAVIOR
+================================================================================
+
+PRIMARY FUNCTIONS:
+
+1. RESPONDING TO REQUESTS
+   
+   General Response Format:
+      Control: Echo request control (same SEQ)
+      Function: RESPONSE (129)
+      IIN: Current status flags
+      Objects: Requested data
+   
+   Processing Steps:
+      1. Receive request from master
+      2. Validate function and objects
+      3. Gather requested data
+      4. Build response
+      5. Set appropriate IIN flags
+      6. Send response
+
+
+2. READ REQUEST HANDLING
+   
+   Class 0 (Integrity) Read:
+      Request: Group 60, Var 1
+      
+      Response includes:
+         - All binary inputs (Group 1)
+         - All analog inputs (Group 30)
+         - All counters (Group 20)
+         - All output statuses (Group 10, 40)
+      
+      Process:
+         1. Scan all configured points
+         2. Read current values
+         3. Apply configured variations
+         4. Build response with all data
+   
+   Class 1/2/3 (Event) Read:
+      Request: Group 60, Var 2/3/4
+      
+      Response includes:
+         - Binary input events (Group 2)
+         - Analog input events (Group 32)
+         - Counter events (Group 22)
+         - Only events in requested class
+      
+      Process:
+         1. Access event buffers
+         2. Retrieve events by class
+         3. Include timestamps
+         4. Remove from buffer after sending
+         5. Clear corresponding IIN class bit if buffer empty
+   
+   Specific Object Read:
+      Request: Specific Group/Variation with range
+      Example: Group 1, Var 2, Points 0-15
+      
+      Response:
+         - Only requested object type
+         - Only requested point range
+         - Current values
+
+
+3. WRITE REQUEST HANDLING
+   
+   Time Sync (Group 50):
+      1. Receive time value
+      2. Update system clock
+      3. Respond with success
+      4. Clear NEED_TIME IIN flag
+   
+   Output Commands (Group 41):
+      1. Receive analog output value
+      2. Apply to physical output
+      3. Respond with status
+   
+   Configuration Data:
+      1. Validate new configuration
+      2. Apply if valid
+      3. Set error IIN if invalid
+
+
+4. SELECT/OPERATE HANDLING
+   
+   SELECT Processing:
+      1. Receive CROB parameters
+      2. Validate control code, timing
+      3. Check if point exists and controllable
+      4. Validate against local/remote mode
+      5. "Arm" the control (store parameters)
+      6. Start SELECT timeout timer
+      7. Respond with status
+      
+      Status Codes:
+         0: SUCCESS
+         1: TIMEOUT
+         2: NO_SELECT
+         3: FORMAT_ERROR
+         4: NOT_SUPPORTED
+         5: ALREADY_ACTIVE
+         6: HARDWARE_ERROR
+         7: LOCAL
+         8: TOO_MANY_OPS
+         9: NOT_AUTHORIZED
+   
+   OPERATE Processing:
+      1. Receive CROB parameters
+      2. Compare with stored SELECT
+      3. If mismatch → Respond NO_SELECT
+      4. If match and within timeout:
+         a. Execute control operation
+         b. Update output
+         c. Generate event
+         d. Respond SUCCESS
+      5. Clear stored SELECT
+   
+   Direct Operate:
+      1. Receive CROB
+      2. No SELECT required
+      3. Execute immediately
+      4. Respond with status
+
+
+5. EVENT GENERATION AND BUFFERING
+   
+   Event Detection:
+      - Binary Input: Change of state
+      - Analog Input: Deadband exceeded
+      - Counter: Change detected
+   
+   Event Creation:
+      1. Detect change
+      2. Create event object
+      3. Add timestamp
+      4. Assign to class (1, 2, or 3)
+      5. Add to event buffer
+      6. Set corresponding IIN class bit
+   
+   Event Buffer Management:
+      - FIFO queue per class
+      - Fixed or configurable size
+      - Overflow: Set IIN2.3, discard oldest
+      - Cleared when master polls and ACKs
+
+
+6. UNSOLICITED RESPONSE GENERATION
+   
+   Requirements:
+      - Must be enabled by master
+      - Events exist in buffer
+      - Configured trigger conditions met
+   
+   Unsolicited Message:
+      Control: FIR=1, FIN=1, CON=1, UNS=1, SEQ=X
+      Function: UNSOLICITED_RESPONSE (130)
+      IIN: Current status
+      Objects: Event data
+   
+   Trigger Conditions (configurable):
+      - Event buffer threshold (e.g., 10 events)
+      - Time elapsed since last unsolicited
+      - Critical alarm/event occurs
+      - Any class 1 event
+   
+   Process:
+      1. Event trigger occurs
+      2. Build unsolicited message
+      3. Increment unsolicited SEQ
+      4. Send to master
+      5. Wait for CONFIRM
+      6. If no CONFIRM within timeout:
+         - Retry (typically 1-3 times)
+         - If all fail, keep events in buffer
+      7. On CONFIRM: Remove events from buffer
+
+
+7. INTERNAL INDICATION MANAGEMENT
+   
+   IIN Flags Updated:
+      - After device restart: Set DEVICE_RESTART
+      - Clock needs sync: Set NEED_TIME
+      - Events in buffer: Set CLASS_X_EVENTS
+      - Buffer overflow: Set EVENT_BUFFER_OVERFLOW
+      - Unsupported request: Set FUNC_NOT_SUPPORTED
+      - Device trouble: Set DEVICE_TROUBLE
+   
+   IIN Flags Cleared:
+      - Master reads events: Clear CLASS_X_EVENTS (if buffer empty)
+      - Time synchronized: Clear NEED_TIME
+      - Device restart flag: After master acknowledges
+      - Trouble resolved: Clear DEVICE_TROUBLE
+
+
+8. ERROR HANDLING
+   
+   Invalid Function Code:
+      - Set IIN2.0 (FUNC_NOT_SUPPORTED)
+      - Return empty response
+   
+   Unknown Object:
+      - Set IIN2.1 (OBJECT_UNKNOWN)
+      - Return empty response or null response
+   
+   Parameter Error:
+      - Set IIN2.2 (PARAMETER_ERROR)
+      - Return response with error indication
+   
+   Busy:
+      - Set IIN2.4 (ALREADY_EXECUTING)
+      - Return response, request retry
+   
+   Local Control Mode:
+      - Set IIN1.5 (LOCAL_CONTROL)
+      - Reject remote control operations
+      - Allow monitoring
+
+
+SEQUENCE NUMBER HANDLING:
+
+Solicited Responses:
+   - Echo sequence from request
+   - No independent counter needed
+
+Unsolicited Responses:
+   - Independent sequence counter (0-15)
+   - Increment for each unsolicited
+   - Wrap at 15
+
+
+================================================================================
+TYPICAL MESSAGE SEQUENCES
+================================================================================
+
+SEQUENCE 1: Integrity Poll
+
+Master → Outstation:
+   Control: 0xC4 (FIR=1, FIN=1, CON=0, UNS=0, SEQ=4)
+   Function: READ (1)
+   Object: Group 60, Var 1 (Class 0)
+
+Outstation → Master:
+   Control: 0xC4 (echo SEQ=4)
+   Function: RESPONSE (129)
+   IIN: 0x00 0x00
+   Objects:
+      Group 1, Var 2: Binary inputs 0-31 (32 points)
+      Group 30, Var 1: Analog inputs 0-7 (8 points)
+      Group 20, Var 1: Counters 0-3 (4 points)
+
+
+SEQUENCE 2: Event Poll
+
+Master → Outstation:
+   Control: 0xC5 (SEQ=5)
+   Function: READ (1)
+   Objects:
+      Group 60, Var 2 (Class 1)
+      Group 60, Var 3 (Class 2)
+
+Outstation → Master:
+   Control: 0xC5
+   Function: RESPONSE (129)
+   IIN: 0x06 0x00 (Class 1 and 2 events)
+   Objects:
+      Group 2, Var 2: Binary events (3 events with timestamps)
+      Group 32, Var 3: Analog events (2 events with timestamps)
+
+(After master receives, outstation clears events from buffer)
+
+
+SEQUENCE 3: Control Operation (SELECT/OPERATE)
+
+Master → Outstation (SELECT):
+   Control: 0xC0 (SEQ=0)
+   Function: SELECT (3)
+   Object: Group 12, Var 1 (CROB)
+   Index: 5
+   Control Code: LATCH_ON
+   Count: 1
+   On-time: 1000ms
+   Off-time: 0
+
+Outstation → Master:
+   Control: 0xC0
+   Function: RESPONSE (129)
+   IIN: 0x00 0x00
+   Object: Group 12, Var 1
+   Status: SUCCESS (0)
+
+Master → Outstation (OPERATE):
+   Control: 0xC1 (SEQ=1)
+   Function: OPERATE (4)
+   Object: Group 12, Var 1 (IDENTICAL to SELECT)
+   Index: 5
+   Control Code: LATCH_ON
+   Count: 1
+   On-time: 1000ms
+   Off-time: 0
+
+Outstation → Master:
+   Control: 0xC1
+   Function: RESPONSE (129)
+   IIN: 0x00 0x00
+   Object: Group 12, Var 1
+   Status: SUCCESS (0)
+
+(Output point 5 is now latched ON)
+
+
+SEQUENCE 4: Time Synchronization
+
+Master → Outstation:
+   Control: 0xC2 (SEQ=2)
+   Function: WRITE (2)
+   Object: Group 50, Var 1
+   Time: 1638360000000 (milliseconds since epoch)
+
+Outstation → Master:
+   Control: 0xC2
+   Function: RESPONSE (129)
+   IIN: 0x00 0x00 (NEED_TIME cleared)
+   No objects
+
+
+SEQUENCE 5: Enable Unsolicited
+
+Master → Outstation:
+   Control: 0xC3 (SEQ=3)
+   Function: ENABLE_UNSOLICITED (20)
+   Objects:
+      Group 60, Var 2 (Class 1)
+      Group 60, Var 3 (Class 2)
+      Group 60, Var 4 (Class 3)
+
+Outstation → Master:
+   Control: 0xC3
+   Function: RESPONSE (129)
+   IIN: 0x00 0x00
+
+(Unsolicited now enabled for all event classes)
+
+
+SEQUENCE 6: Unsolicited Response
+
+[Critical event occurs at outstation]
+
+Outstation → Master:
+   Control: 0xD0 (FIR=1, FIN=1, CON=1, UNS=1, SEQ=0)
+   Function: UNSOLICITED_RESPONSE (130)
+   IIN: 0x02 0x00 (Class 1 events)
+   Objects:
+      Group 2, Var 2: Binary input event (critical alarm)
+
+Master → Outstation:
+   Control: 0xD0 (echo unsolicited SEQ=0)
+   Function: CONFIRM (0)
+   No objects
+
+(Outstation removes event from buffer)
+
+
+SEQUENCE 7: Error Response
+
+Master → Outstation:
+   Control: 0xC4
+   Function: OPEN_FILE (25) ← Not supported
+   Object: Group 70, Var 1
+
+Outstation → Master:
+   Control: 0xC4
+   Function: RESPONSE (129)
+   IIN: 0x00 0x01 (IIN2.0 = FUNC_NOT_SUPPORTED)
+   No objects
+
+
+================================================================================
+APPLICATION LAYER STATE MACHINES
+================================================================================
+
+MASTER STATE MACHINE (Simplified):
+
+States:
+   - IDLE: No active request
+   - WAITING_FOR_RESPONSE: Request sent
+   - WAITING_FOR_CONFIRM: Sent unsolicited confirm
+
+IDLE State:
+   Actions:
+      - Check poll schedule
+      - Check operator commands
+      - Process incoming unsolicited
+   
+   Transitions:
+      → Send request → WAITING_FOR_RESPONSE
+      → Receive unsolicited → Send CONFIRM → WAITING_FOR_CONFIRM
+
+WAITING_FOR_RESPONSE State:
+   Waiting for: Response to request
+   Timeout: 5-30 seconds
+   
+   On receive response:
+      - Validate sequence
+      - Process data
+      - Update database
+      - Transition to IDLE
+   
+   On timeout:
+      - Retry (if retries remaining)
+      - Mark outstation offline (if retries exhausted)
+      - Transition to IDLE
+
+WAITING_FOR_CONFIRM State:
+   After sending CONFIRM for unsolicited
+   Very brief state
+   Immediately → IDLE
+
+
+OUTSTATION STATE MACHINE (Simplified):
+
+States:
+   - IDLE: Waiting for request
+   - PROCESSING_REQUEST: Executing request
+   - SELECT_ARMED: SELECT received, waiting for OPERATE
+   - WAITING_FOR_CONFIRM: Unsolicited sent
+
+IDLE State:
+   Waiting for: Master request
+   
+   Actions:
+      - Monitor for events
+      - Update IIN flags
+      - Check unsolicited trigger conditions
+   
+   On receive request:
+      → PROCESSING_REQUEST
+   
+   On unsolicited trigger:
+      → Send unsolicited → WAITING_FOR_CONFIRM
+
+PROCESSING_REQUEST State:
+   Actions:
+      - Execute function
+      - Gather data
+      - Build response
+      - Send response
+   
+   Special case (SELECT):
+      - Arm control
+      - Start SELECT timer
+      - Transition to SELECT_ARMED
+   
+   Normal case:
+      - Transition to IDLE
+
+SELECT_ARMED State:
+   Waiting for: OPERATE command
+   Timeout: 2-10 seconds
+   
+   On receive OPERATE (matching SELECT):
+      - Execute control
+      - Send response
+      - Transition to IDLE
+   
+   On timeout:
+      - Clear armed control
+      - Transition to IDLE
+   
+   On new SELECT:
+      - Replace armed control
+      - Restart timer
+      - Stay in SELECT_ARMED
+
+WAITING_FOR_CONFIRM State:
+   After sending unsolicited
+   Timeout: 5-30 seconds
+   
+   On receive CONFIRM:
+      - Clear events from buffer
+      - Transition to IDLE
+   
+   On timeout:
+      - Retry unsolicited (if retries remaining)
+      - Keep events in buffer (if retries exhausted)
+      - Transition to IDLE
+
+
+================================================================================
+PERFORMANCE CONSIDERATIONS
+================================================================================
+
+Event Buffer Sizing:
+   - Depends on event rate and poll frequency
+   - Typical: 100-1000 events per class
+   - Monitor IIN2.3 (overflow) to adjust
+
+Poll Frequency:
+   - Integrity (Class 0): 30-300 seconds
+   - Event (Class 1/2/3): 1-10 seconds
+   - Critical systems: Sub-second event polls
+
+Response Time:
+   - Outstation should respond within 1-5 seconds
+   - Faster for control operations
+   - Accounts for processing and data link retries
+
+Unsolicited Throttling:
+   - Limit unsolicited rate (e.g., max 1 per second)
+   - Prevents network flooding
+   - Batch events when possible
+
+Sequence Number Management:
+   - Track per outstation (master)
+   - Separate for solicited/unsolicited
+   - Detect stale responses
+
+
+================================================================================
+QUICK REFERENCE
+================================================================================
+
+Common Control Byte Values:
+   0xC0-0xCF: Normal request/response (SEQ 0-15)
+   0xD0-0xDF: Unsolicited response (SEQ 0-15)
+   0xE0-0xEF: CONFIRM of unsolicited (SEQ 0-15)
+
+Critical Function Codes:
+   0: CONFIRM
+   1: READ
+   3/4: SELECT/OPERATE
+   5: DIRECT_OPERATE
+   20/21: ENABLE/DISABLE_UNSOLICITED
+   129: RESPONSE
+   130: UNSOLICITED_RESPONSE
+
+Essential Objects:
+   60.1: Class 0 (integrity)
+   60.2/3/4: Class 1/2/3 (events)
+   1.2: Binary input
+   2.2: Binary input event
+   30.1: Analog input
+   32.3: Analog input event with time
+   12.1: CROB
+
+Key IIN Flags:
+   IIN1.1/2/3: Events available
+   IIN1.4: Need time sync
+   IIN2.0: Function not supported
+   IIN2.1: Object unknown
+   IIN2.3: Buffer overflow
+
+================================================================================
