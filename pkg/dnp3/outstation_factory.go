@@ -260,6 +260,18 @@ func (b *UpdateBuilder) UpdateFrozenCounter(value types.FrozenCounter, index uin
 	return b
 }
 
+// UpdateBinaryOutputStatus updates a binary output status point
+func (b *UpdateBuilder) UpdateBinaryOutputStatus(value types.BinaryOutputStatus, index uint16, mode EventMode) *UpdateBuilder {
+	b.builder.UpdateBinaryOutputStatus(value, index, outstation.EventMode(mode))
+	return b
+}
+
+// UpdateAnalogOutputStatus updates an analog output status point
+func (b *UpdateBuilder) UpdateAnalogOutputStatus(value types.AnalogOutputStatus, index uint16, mode EventMode) *UpdateBuilder {
+	b.builder.UpdateAnalogOutputStatus(value, index, outstation.EventMode(mode))
+	return b
+}
+
 // Build builds the updates
 func (b *UpdateBuilder) Build() *Updates {
 	internalUpdates := b.builder.Build()

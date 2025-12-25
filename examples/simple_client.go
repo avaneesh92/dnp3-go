@@ -193,13 +193,13 @@ func exampleOutstation() {
 
 	// Configure database (matching C++ opendnp3 example with 10 of each type)
 	dbConfig := dnp3.DatabaseConfig{
-		Binary:        make([]dnp3.BinaryPointConfig, 10),
-		DoubleBit:     make([]dnp3.DoubleBitBinaryPointConfig, 10),
-		Analog:        make([]dnp3.AnalogPointConfig, 10),
-		Counter:       make([]dnp3.CounterPointConfig, 10),
-		FrozenCounter: make([]dnp3.FrozenCounterPointConfig, 10),
-		BinaryOutput:  make([]dnp3.BinaryOutputStatusPointConfig, 10),
-		AnalogOutput:  make([]dnp3.AnalogOutputStatusPointConfig, 10),
+		Binary:        make([]dnp3.BinaryPointConfig, 1),
+		DoubleBit:     make([]dnp3.DoubleBitBinaryPointConfig, 1),
+		Analog:        make([]dnp3.AnalogPointConfig, 1),
+		Counter:       make([]dnp3.CounterPointConfig, 1),
+		FrozenCounter: make([]dnp3.FrozenCounterPointConfig, 1),
+		BinaryOutput:  make([]dnp3.BinaryOutputStatusPointConfig, 1),
+		AnalogOutput:  make([]dnp3.AnalogOutputStatusPointConfig, 1),
 	}
 
 	// Set point configurations
@@ -404,7 +404,7 @@ func main() {
 	dnp3.SetLogLevel(dnp3.LevelDebug)
 
 	// Optional: Enable frame debugging for detailed hex dumps
-	dnp3.EnableFrameDebug(true)
+	dnp3.EnableFrameDebug(false)
 
 	exampleOutstation()
 
